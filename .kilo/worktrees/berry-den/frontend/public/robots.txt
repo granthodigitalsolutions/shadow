@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /secretary/
+Disallow: /referee/
+
+Sitemap: https://teamshadowkai.com/sitemap.xml

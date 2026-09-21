@@ -1,0 +1,9 @@
+{
+  "name": "team-shadow-kai-backend",
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/api/index.js"
+    }
+  ]
+}

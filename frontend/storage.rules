@@ -1,0 +1,70 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+      firestore.exists(
+        /databases/(default)/documents/admins/$(request.auth.uid)
+      );
+    }
+
+    function isReferee() {
+      return isAuthenticated() &&
+      firestore.exists(
+        /databases/(default)/documents/referees/$(request.auth.uid)
+      );
+    }
+
+    function isSecretary() {
+      return isAuthenticated() &&
+      firestore.exists(
+        /databases/(default)/documents/secretaries/$(request.auth.uid)
+      );
+    }
+
+    // Coach is the renamed Secretary role — see firestore.rules for the
+    // full transition note. Remove isSecretary() once the Coach frontend
+    // has been live and stable for a few days.
+    function isCoach() {
+      return isAuthenticated() &&
+      firestore.exists(
+        /databases/(default)/documents/coaches/$(request.auth.uid)
+      );
+    }
+
+    function isValidPdf() {
+      return request.resource.contentType.matches('application/pdf')
+      &&
+      request.resource.size < 10 * 1024 * 1024;
+    }
+
+    match /results/{allPaths=**} {
+
+      // Anyone can read their result pdf
+      allow read: if true;
+
+      allow create, update:
+      if (isAdmin() || isReferee() || isSecretary() || isCoach()) && isValidPdf();
+
+      allow delete:
+      if isAdmin();
+
+    }
+
+    match /qrs/{fileName} {
+      // Anyone can create a QR code if they are generating it during registration
+      allow create: if request.resource.contentType.matches('image/png') && request.resource.size < 2 * 1024 * 1024;
+      // Anyone can read their QR code to display it
+      allow read: if true;
+    }
+  }
+}

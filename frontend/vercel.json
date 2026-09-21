@@ -1,0 +1,9 @@
+{
+  "name": "teamshadowkai",
+  "rewrites": [
+    {
+      "source": "/((?!api/|pdfs/|assets/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

@@ -1,0 +1,1506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KaratePass — Belt Test System</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --red:    #FF3B2F;
+  --orange: #FF8C00;
+  --yellow: #FFD700;
+  --green:  #00C853;
+  --blue:   #2979FF;
+  --purple: #AA00FF;
+  --pink:   #FF4081;
+  --white:  #FFFFFF;
+  --off:    #F7F5F2;
+  --ink:    #0D0D0D;
+  --ink2:   #1E1E1E;
+  --muted:  #666;
+  --border: #E8E4DE;
+  --r:      16px;
+  --rs:     10px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Nunito', sans-serif;
+  background: var(--off);
+  color: var(--ink);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── TOPBAR ── */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 28px;
+  height: 64px;
+  background: var(--ink);
+  position: sticky;
+  top: 0;
+  z-index: 200;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.logo-badge {
+  width: 38px; height: 38px;
+  background: var(--red);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.logo-badge svg { width: 20px; height: 20px; }
+
+.logo-text {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 26px;
+  letter-spacing: 2px;
+  color: #fff;
+}
+.logo-text span { color: var(--yellow); }
+
+.nav-pills {
+  display: flex;
+  gap: 4px;
+  background: #1A1A1A;
+  padding: 5px;
+  border-radius: 14px;
+}
+
+.npill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 15px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: #888;
+  font-family: 'Nunito', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.npill svg { width: 15px; height: 15px; flex-shrink: 0; }
+.npill:hover { color: #fff; }
+.npill.on { color: var(--ink); }
+
+/* active pill colors per page */
+.npill.on[data-page="register"]   { background: var(--orange); }
+.npill.on[data-page="payment"]    { background: var(--blue); }
+.npill.on[data-page="hallticket"] { background: var(--green); }
+.npill.on[data-page="referee"]    { background: var(--red); }
+.npill.on[data-page="admin"]      { background: var(--purple); color: #fff; }
+
+/* ── PAGES ── */
+.page { display: none; animation: slideUp .3s cubic-bezier(.22,.68,0,1.2) both; }
+.page.on { display: block; }
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── REGISTER HERO ── */
+.reg-hero {
+  background: var(--ink);
+  padding: 0 28px 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.reg-hero-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 24px;
+  padding-top: 36px;
+}
+
+.reg-hero-text { padding-bottom: 32px; }
+
+.hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(255,140,0,.15);
+  border: 1px solid rgba(255,140,0,.4);
+  color: var(--orange);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: 5px 12px;
+  border-radius: 999px;
+  margin-bottom: 16px;
+}
+.hero-eyebrow svg { width: 13px; height: 13px; }
+
+.hero-h1 {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(52px, 7vw, 88px);
+  letter-spacing: 3px;
+  line-height: .95;
+  color: #fff;
+}
+.hero-h1 .accent { color: var(--orange); }
+
+.hero-sub {
+  font-size: 15px;
+  color: #888;
+  margin-top: 14px;
+  line-height: 1.6;
+}
+
+.hero-deco {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 32px;
+  flex-shrink: 0;
+}
+
+.belt-strip {
+  width: 180px;
+  height: 22px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 10px;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 13px;
+  letter-spacing: 1px;
+  color: rgba(0,0,0,.6);
+  transition: transform .2s;
+}
+.belt-strip:hover { transform: scaleX(1.04); }
+
+/* ── CONTENT AREA ── */
+.content {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px 28px 60px;
+}
+
+/* ── SECTION LABEL ── */
+.sec-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.sec-label-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.sec-label h2 {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 22px;
+  letter-spacing: 1.5px;
+  color: var(--ink);
+}
+.sec-label p {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+/* ── GLASS CARD ── */
+.gcard {
+  background: #fff;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r);
+  padding: 24px;
+  margin-bottom: 20px;
+}
+
+/* ── FORM ── */
+.fgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media(max-width:580px) { .fgrid { grid-template-columns: 1fr; } }
+
+.frow { display: flex; flex-direction: column; gap: 6px; }
+
+.flabel {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--muted);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.flabel svg { width: 14px; height: 14px; flex-shrink: 0; }
+.flabel .ta { color: #bbb; font-size: 11px; text-transform: none; letter-spacing: 0; }
+
+.finput {
+  background: var(--off);
+  border: 2px solid var(--border);
+  border-radius: var(--rs);
+  padding: 12px 14px;
+  font-family: 'Nunito', sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  outline: none;
+  transition: border-color .18s, box-shadow .18s;
+  width: 100%;
+}
+.finput:focus {
+  border-color: var(--orange);
+  box-shadow: 0 0 0 4px rgba(255,140,0,.12);
+  background: #fff;
+}
+.finput::placeholder { color: #bbb; font-weight: 500; }
+
+/* ── BELT PICKER ── */
+.belt-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px,1fr));
+  gap: 10px;
+}
+
+.bpick {
+  border: 2.5px solid var(--border);
+  border-radius: var(--r);
+  padding: 14px 12px 12px;
+  cursor: pointer;
+  background: #fff;
+  transition: all .18s;
+  position: relative;
+  overflow: hidden;
+}
+
+.bpick:hover { border-color: #ccc; transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.08); }
+
+.bpick.on {
+  border-color: transparent;
+  transform: translateY(-3px);
+  box-shadow: 0 8px 28px rgba(0,0,0,.15);
+}
+
+.bpick-bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 9px;
+}
+.bbar { flex: 1; height: 9px; border-radius: 5px; }
+.barr {
+  font-size: 10px;
+  color: #bbb;
+  flex-shrink: 0;
+}
+
+.bpick-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  line-height: 1.3;
+}
+.bpick-fee {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 18px;
+  letter-spacing: .5px;
+  margin-top: 3px;
+}
+
+.bpick-tick {
+  position: absolute;
+  top: 9px; right: 9px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.bpick-tick svg { width: 11px; height: 11px; }
+.bpick.on .bpick-tick { display: flex; }
+
+/* belt accent colors per transition */
+.bpick[data-i="0"].on { background: linear-gradient(135deg,#fffbf0,#fff8e0); border-color: #FFD700; }
+.bpick[data-i="0"].on .bpick-fee { color: #B8860B; }
+.bpick[data-i="0"].on .bpick-tick { background: #FFD700; }
+
+.bpick[data-i="1"].on { background: linear-gradient(135deg,#fff8e0,#fff3cc); border-color: #FF8C00; }
+.bpick[data-i="1"].on .bpick-fee { color: #CC6A00; }
+.bpick[data-i="1"].on .bpick-tick { background: #FF8C00; }
+
+.bpick[data-i="2"].on { background: linear-gradient(135deg,#f0fff5,#e0f8ec); border-color: #00C853; }
+.bpick[data-i="2"].on .bpick-fee { color: #007A30; }
+.bpick[data-i="2"].on .bpick-tick { background: #00C853; }
+
+.bpick[data-i="3"].on { background: linear-gradient(135deg,#f0f5ff,#e0eaff); border-color: #2979FF; }
+.bpick[data-i="3"].on .bpick-fee { color: #1045CC; }
+.bpick[data-i="3"].on .bpick-tick { background: #2979FF; }
+
+.bpick[data-i="4"].on { background: linear-gradient(135deg,#f8f0ff,#f0e0ff); border-color: #AA00FF; }
+.bpick[data-i="4"].on .bpick-fee { color: #7700BB; }
+.bpick[data-i="4"].on .bpick-tick { background: #AA00FF; }
+
+.bpick[data-i="5"].on { background: linear-gradient(135deg,#fff0f5,#ffe0ec); border-color: #FF4081; }
+.bpick[data-i="5"].on .bpick-fee { color: #CC0044; }
+.bpick[data-i="5"].on .bpick-tick { background: #FF4081; }
+
+.bpick[data-i="6"].on { background: linear-gradient(135deg,#f5f0ee,#ede0d8); border-color: #8B4513; }
+.bpick[data-i="6"].on .bpick-fee { color: #5C2D0A; }
+.bpick[data-i="6"].on .bpick-tick { background: #8B4513; }
+
+/* ── BIG CTA BUTTON ── */
+.bigcta {
+  width: 100%;
+  padding: 18px 24px;
+  border: none;
+  border-radius: var(--r);
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 22px;
+  letter-spacing: 2.5px;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  transition: all .2s;
+  position: relative;
+  overflow: hidden;
+}
+.bigcta::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,.12);
+  opacity: 0;
+  transition: opacity .2s;
+}
+.bigcta:hover::after { opacity: 1; }
+.bigcta:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(0,0,0,.2); }
+.bigcta:active { transform: translateY(0); }
+.bigcta svg { width: 22px; height: 22px; flex-shrink: 0; }
+
+/* ── PAYMENT PAGE ── */
+.pay-hero {
+  background: var(--blue);
+  padding: 36px 28px 32px;
+}
+.pay-hero-inner { max-width: 960px; margin: 0 auto; }
+
+.pay-hero-label {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(40px,6vw,72px);
+  letter-spacing: 3px;
+  color: #fff;
+  line-height: 1;
+}
+.pay-hero-label span { color: rgba(255,255,255,.4); }
+
+.pay-summary-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(255,255,255,.15);
+  border: 1.5px solid rgba(255,255,255,.25);
+  border-radius: var(--r);
+  padding: 16px 20px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+.pay-belt-row { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px; }
+.pbar { width: 52px; height: 12px; border-radius: 6px; flex-shrink: 0; }
+.parrow { color: rgba(255,255,255,.5); font-size: 20px; }
+.pay-belt-name { font-size: 15px; font-weight: 700; color: #fff; }
+.pay-belt-sub { font-size: 11px; color: rgba(255,255,255,.6); }
+
+.pay-fee-big {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 42px;
+  letter-spacing: 1px;
+  color: var(--yellow);
+  line-height: 1;
+}
+.pay-fee-sub { font-size: 11px; color: rgba(255,255,255,.5); text-align: right; }
+
+/* payment method tiles */
+.pay-methods {
+  display: grid;
+  grid-template-columns: repeat(4,1fr);
+  gap: 10px;
+  margin-bottom: 20px;
+}
+@media(max-width:500px) { .pay-methods { grid-template-columns: repeat(2,1fr); } }
+
+.pmt {
+  background: #fff;
+  border: 2.5px solid var(--border);
+  border-radius: var(--r);
+  padding: 18px 10px 14px;
+  text-align: center;
+  cursor: pointer;
+  transition: all .18s;
+}
+.pmt:hover { border-color: #aaa; transform: translateY(-2px); }
+.pmt.on { border-color: var(--blue); background: rgba(41,121,255,.06); box-shadow: 0 0 0 4px rgba(41,121,255,.12); }
+
+.pmt-icon {
+  width: 46px; height: 46px;
+  border-radius: 12px;
+  margin: 0 auto 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+.pmt span { font-size: 13px; font-weight: 700; color: var(--muted); }
+.pmt.on span { color: var(--blue); }
+
+.amount-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--off);
+  border-radius: var(--rs);
+  padding: 16px 20px;
+  border: 2px solid var(--border);
+  margin-bottom: 18px;
+}
+.amt-label { font-size: 13px; font-weight: 700; color: var(--muted); }
+.amt-num {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 36px;
+  letter-spacing: 1px;
+  color: var(--blue);
+}
+.amt-secure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--green);
+}
+.amt-secure svg { width: 14px; height: 14px; }
+
+/* ── HALL TICKET ── */
+.ht-hero {
+  background: var(--green);
+  padding: 36px 28px 32px;
+}
+.ht-hero-label {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(40px,6vw,72px);
+  letter-spacing: 3px;
+  color: #fff;
+  line-height: 1;
+}
+.ht-hero-label span { color: rgba(0,0,0,.25); }
+
+.ht-card {
+  background: #fff;
+  border-radius: 20px;
+  overflow: hidden;
+  border: 2px solid #E0E0E0;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.ht-stripe {
+  display: flex;
+  align-items: stretch;
+  height: 8px;
+}
+.ht-stripe div { flex: 1; }
+
+.ht-header {
+  background: var(--ink);
+  padding: 20px 22px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.ht-logo {
+  width: 42px; height: 42px;
+  background: var(--red);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.ht-logo svg { width: 22px; height: 22px; }
+.ht-header-title {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 18px;
+  letter-spacing: 1.5px;
+  color: #fff;
+}
+.ht-header-sub { font-size: 11px; color: #999; margin-top: 2px; }
+.ht-admit {
+  margin-left: auto;
+  background: var(--yellow);
+  color: #000;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+.ht-body { padding: 22px; }
+
+.ht-student-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.ht-av {
+  width: 52px; height: 52px;
+  background: #FFF3E0;
+  border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 20px;
+  letter-spacing: 1px;
+  color: var(--orange);
+  flex-shrink: 0;
+}
+.ht-sname { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1px; color: var(--ink); }
+.ht-ssub { font-size: 12px; color: var(--muted); font-weight: 600; margin-top: 2px; }
+
+.ht-detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1.5px dashed #eee;
+  font-size: 13px;
+}
+.ht-detail:last-child { border-bottom: none; }
+.ht-dl { color: #999; display: flex; align-items: center; gap: 6px; font-weight: 700; }
+.ht-dl svg { width: 13px; height: 13px; }
+.ht-dv { font-weight: 700; color: var(--ink); display: flex; align-items: center; gap: 6px; }
+
+.ht-qr-area {
+  background: var(--off);
+  border-radius: 12px;
+  padding: 18px;
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.qr-g {
+  display: grid;
+  grid-template-columns: repeat(9, 10px);
+  grid-template-rows: repeat(9, 10px);
+  gap: 2px;
+}
+.qc { border-radius: 2px; }
+.ht-qr-note { font-size: 11px; color: #999; font-weight: 700; text-align: center; }
+
+/* ── REFEREE PAGE ── */
+.ref-hero {
+  background: var(--red);
+  padding: 36px 28px 32px;
+}
+.ref-hero-label {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(40px,6vw,72px);
+  letter-spacing: 3px;
+  color: #fff;
+  line-height: 1;
+}
+.ref-hero-label span { color: rgba(0,0,0,.2); }
+
+.ref-student-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(0,0,0,.2);
+  border-radius: 999px;
+  padding: 8px 18px 8px 8px;
+  margin-top: 18px;
+}
+.ref-av-sm {
+  width: 32px; height: 32px;
+  background: var(--yellow);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 13px;
+  color: #000;
+  flex-shrink: 0;
+}
+.ref-student-tag span { font-size: 14px; font-weight: 700; color: #fff; }
+
+.score-block { margin-bottom: 24px; }
+
+.score-block-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.sbt-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.sbt-text {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 18px;
+  letter-spacing: 1.5px;
+  color: var(--ink);
+}
+.sbt-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+
+.score-rows-wrap {
+  background: #fff;
+  border: 2px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+.srow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border-bottom: 1.5px solid var(--off);
+  transition: background .15s;
+}
+.srow:last-child { border-bottom: none; }
+.srow:hover { background: var(--off); }
+
+.srow-icon {
+  width: 40px; height: 40px;
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.srow-icon svg { width: 19px; height: 19px; }
+
+.srow-info { flex: 1; }
+.srow-en { font-size: 15px; font-weight: 800; color: var(--ink); }
+.srow-ta { font-size: 11px; color: var(--muted); font-weight: 600; }
+
+.srow-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sbtn {
+  width: 42px; height: 42px;
+  border-radius: 50%;
+  border: 2.5px solid var(--border);
+  background: var(--off);
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 300;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .12s;
+  flex-shrink: 0;
+  font-family: 'Nunito', sans-serif;
+  line-height: 1;
+}
+.sbtn:hover { border-color: #999; background: #eee; transform: scale(1.08); }
+.sbtn:active { transform: scale(0.92); }
+
+.sv {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 28px;
+  letter-spacing: 1px;
+  min-width: 34px;
+  text-align: center;
+  color: var(--ink);
+}
+.s10 { font-size: 12px; color: #bbb; font-weight: 700; }
+
+.total-score-strip {
+  background: var(--ink);
+  border-radius: var(--r);
+  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  margin-top: 4px;
+}
+.ts-label { font-size: 14px; font-weight: 800; color: #888; }
+.ts-ta { font-size: 12px; color: #555; }
+.ts-num {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 52px;
+  letter-spacing: 2px;
+  color: var(--yellow);
+  line-height: 1;
+}
+.ts-of { font-size: 18px; color: #555; }
+
+/* ── ADMIN PAGE ── */
+.admin-hero {
+  background: var(--purple);
+  padding: 36px 28px 32px;
+}
+.admin-hero-label {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(40px,6vw,72px);
+  letter-spacing: 3px;
+  color: #fff;
+  line-height: 1;
+}
+.admin-hero-label span { color: rgba(255,255,255,.3); }
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(4,1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+@media(max-width:600px) { .stat-row { grid-template-columns: repeat(2,1fr); } }
+
+.scard {
+  border-radius: var(--r);
+  padding: 18px;
+  border: 2px solid transparent;
+  position: relative;
+  overflow: hidden;
+}
+
+.scard-num {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 40px;
+  letter-spacing: 1px;
+  line-height: 1;
+}
+.scard-lbl { font-size: 12px; font-weight: 800; margin-top: 4px; }
+
+.scard-icon {
+  position: absolute;
+  right: 14px; top: 14px;
+  opacity: .25;
+}
+.scard-icon svg { width: 32px; height: 32px; }
+
+.scard-red   { background: #FFF5F5; border-color: #FFD0CC; }
+.scard-red .scard-num   { color: var(--red); }
+.scard-red .scard-lbl   { color: #CC2200; }
+
+.scard-orange { background: #FFF8F0; border-color: #FFD4A3; }
+.scard-orange .scard-num { color: var(--orange); }
+.scard-orange .scard-lbl { color: #AA5500; }
+
+.scard-blue   { background: #F0F5FF; border-color: #BBCCFF; }
+.scard-blue .scard-num   { color: var(--blue); }
+.scard-blue .scard-lbl   { color: #1040BB; }
+
+.scard-green  { background: #F0FFF5; border-color: #B3F0C8; }
+.scard-green .scard-num  { color: var(--green); }
+.scard-green .scard-lbl  { color: #007730; }
+
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media(max-width:660px) { .two-col { grid-template-columns: 1fr; } }
+
+table { width: 100%; border-collapse: collapse; }
+thead tr { border-bottom: 2.5px solid var(--off); }
+th { text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 800; color: var(--muted); letter-spacing: .07em; text-transform: uppercase; }
+td { padding: 10px 14px; font-size: 13px; border-bottom: 1.5px solid var(--off); font-weight: 600; vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #FAFAFA; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+}
+.bp { background: #E8F8EE; color: #007730; }
+.bf { background: #FEECEB; color: #CC2200; }
+.bpend { background: #FFF8E0; color: #996600; }
+
+.action-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 2px solid var(--off);
+}
+
+.abtn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 16px;
+  border-radius: var(--rs);
+  border: 2px solid var(--border);
+  background: var(--off);
+  font-family: 'Nunito', sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--ink);
+  cursor: pointer;
+  transition: all .15s;
+}
+.abtn:hover { background: #eee; border-color: #ccc; }
+.abtn svg { width: 14px; height: 14px; }
+.abtn.ag { background: #E8F8EE; border-color: #B3ECC8; color: #007730; }
+.abtn.ag:hover { background: #D4F4E0; }
+.abtn.ao { background: #FFF8E0; border-color: #FFD4A3; color: #AA5500; }
+.abtn.ao:hover { background: #FFEECC; }
+
+.notif-row {
+  display: flex;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1.5px solid var(--off);
+  align-items: flex-start;
+}
+.notif-row:last-child { border-bottom: none; }
+.notif-icon {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  background: #E8F8EE;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.notif-icon svg { width: 18px; height: 18px; color: var(--green); }
+.notif-name { font-size: 13px; font-weight: 800; color: var(--ink); }
+.notif-msg { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.5; font-weight: 600; }
+.notif-time { font-size: 11px; color: #bbb; font-weight: 700; }
+
+.bsw { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+
+/* nav scroll on mobile */
+@media(max-width:700px) {
+  .nav-pills { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+  .topbar { padding: 0 16px; }
+  .reg-hero, .pay-hero, .ht-hero, .ref-hero, .admin-hero { padding-left: 16px; padding-right: 16px; }
+  .content { padding: 20px 16px 48px; }
+  .reg-hero-inner { grid-template-columns: 1fr; }
+  .hero-deco { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<nav class="topbar">
+  <div class="logo">
+    <div class="logo-badge">
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    </div>
+    <span class="logo-text">Karate<span>Pass</span></span>
+  </div>
+  <div class="nav-pills">
+    <button class="npill on" data-page="register" onclick="go('register')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+      Register
+    </button>
+    <button class="npill" data-page="payment" onclick="go('payment')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+      Payment
+    </button>
+    <button class="npill" data-page="hallticket" onclick="go('hallticket')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 12v10H4V12"/><path d="M22 7H2v5h20V7z"/><path d="M12 22V7"/></svg>
+      Hall Ticket
+    </button>
+    <button class="npill" data-page="referee" onclick="go('referee')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      Scoring
+    </button>
+    <button class="npill" data-page="admin" onclick="go('admin')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      Admin
+    </button>
+  </div>
+</nav>
+
+<!-- ════════════════ REGISTER ════════════════ -->
+<div id="p-register" class="page on">
+
+  <div class="reg-hero">
+    <div class="reg-hero-inner">
+      <div class="reg-hero-text">
+        <div class="hero-eyebrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          Tamil Nadu Karate Federation
+        </div>
+        <h1 class="hero-h1">BELT<br><span class="accent">TEST</span><br>REGISTRATION</h1>
+        <p class="hero-sub">மாணவர் பதிவு — Fill in all details below and choose your belt level to get started.</p>
+      </div>
+      <div class="hero-deco">
+        <div class="belt-strip" style="background:#FFFFFF;color:#555;border:2px solid #ddd;">WHITE BELT</div>
+        <div class="belt-strip" style="background:#FFD700;color:#000;">YELLOW BELT</div>
+        <div class="belt-strip" style="background:#FF8C00;color:#fff;">ORANGE BELT</div>
+        <div class="belt-strip" style="background:#00C853;color:#fff;">GREEN BELT</div>
+        <div class="belt-strip" style="background:#2979FF;color:#fff;">BLUE BELT</div>
+        <div class="belt-strip" style="background:#AA00FF;color:#fff;">PURPLE BELT</div>
+        <div class="belt-strip" style="background:#8B4513;color:#fff;">BROWN BELT</div>
+        <div class="belt-strip" style="background:#0D0D0D;color:#fff;">BLACK BELT</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="gcard">
+      <div class="sec-label">
+        <div class="sec-label-dot" style="background:var(--orange)"></div>
+        <div><h2>Personal Details</h2><p>தனிப்பட்ட விவரங்கள்</p></div>
+      </div>
+      <div class="fgrid" style="margin-bottom:16px;">
+        <div class="frow">
+          <label class="flabel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="2.5"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+            Student Name <span class="ta">· மாணவர் பெயர்</span>
+          </label>
+          <input class="finput" type="text" placeholder="Enter full name">
+        </div>
+        <div class="frow">
+          <label class="flabel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="2.5"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            School Name <span class="ta">· பள்ளி பெயர்</span>
+          </label>
+          <input class="finput" type="text" placeholder="School or Institution">
+        </div>
+        <div class="frow">
+          <label class="flabel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="2.5"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            Standard <span class="ta">· வகுப்பு</span>
+          </label>
+          <input class="finput" type="text" placeholder="e.g. 8th Standard">
+        </div>
+        <div class="frow">
+          <label class="flabel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.4 2 2 0 0 1 3.6 1.21h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.67 2.81a2 2 0 0 1-.45 2.11L7.91 9.2a16 16 0 0 0 6.29 6.29l1.06-.61a2 2 0 0 1 2.11-.45c.91.31 1.85.54 2.81.67A2 2 0 0 1 22 16.92z"/></svg>
+            Contact Number <span class="ta">· தொடர்பு எண்</span>
+          </label>
+          <input class="finput" type="tel" placeholder="+91 00000 00000">
+        </div>
+      </div>
+      <div class="frow">
+        <label class="flabel">
+          <svg viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Parent WhatsApp <span class="ta">· பெற்றோர் வாட்ஸ்அப் எண்</span>
+        </label>
+        <input class="finput" type="tel" placeholder="+91 00000 00000">
+      </div>
+    </div>
+
+    <div class="gcard">
+      <div class="sec-label">
+        <div class="sec-label-dot" style="background:var(--red)"></div>
+        <div><h2>Choose Your Belt Test</h2><p>பட்டை தேர்வு தேர்ந்தெடு — Select the transition you are testing for</p></div>
+      </div>
+      <div class="belt-picker" id="bpicker"></div>
+    </div>
+
+    <button class="bigcta" style="background:var(--orange);" onclick="go('payment')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+      REGISTER NOW &nbsp;·&nbsp; பதிவு செய்யவும்
+    </button>
+  </div>
+</div>
+
+<!-- ════════════════ PAYMENT ════════════════ -->
+<div id="p-payment" class="page">
+  <div class="pay-hero">
+    <div class="pay-hero-inner">
+      <div class="pay-hero-label">COMPLETE<br><span>YOUR</span> PAYMENT</div>
+      <p style="color:rgba(255,255,255,.7);font-size:14px;font-weight:700;margin-top:10px;">கட்டண விவரங்கள் — Secure online payment</p>
+      <div class="pay-summary-card">
+        <div class="pay-belt-row">
+          <div class="pbar" style="background:#fff;border:2px solid rgba(255,255,255,.4);"></div>
+          <span class="parrow">→</span>
+          <div class="pbar" style="background:#FFD700;"></div>
+          <div style="margin-left:4px;">
+            <div class="pay-belt-name">White Belt → Yellow Belt</div>
+            <div class="pay-belt-sub">வெண் பட்டை → மஞ்சள் பட்டை</div>
+          </div>
+        </div>
+        <div>
+          <div class="pay-fee-big">₹1,200</div>
+          <div class="pay-fee-sub">Test Registration Fee</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="gcard">
+      <div class="sec-label">
+        <div class="sec-label-dot" style="background:var(--blue)"></div>
+        <div><h2>Payment Method</h2><p>கட்டண முறை தேர்ந்தெடு</p></div>
+      </div>
+      <div class="pay-methods">
+        <div class="pmt on" onclick="pickPay(this)">
+          <div class="pmt-icon" style="background:#EEE8FF;">
+            <svg width="26" height="26" viewBox="0 0 100 100"><rect width="100" height="100" rx="18" fill="#5f259f"/><text x="50" y="64" text-anchor="middle" fill="white" font-size="28" font-weight="900" font-family="sans-serif">UPI</text></svg>
+          </div>
+          <span>UPI</span>
+        </div>
+        <div class="pmt" onclick="pickPay(this)">
+          <div class="pmt-icon" style="background:#EEE8FF;">
+            <svg width="26" height="26" viewBox="0 0 100 100"><rect width="100" height="100" rx="18" fill="#5f259f"/><circle cx="50" cy="38" r="22" fill="#8b2be2"/><text x="50" y="80" text-anchor="middle" fill="white" font-size="18" font-weight="900" font-family="sans-serif">Pe</text></svg>
+          </div>
+          <span>PhonePe</span>
+        </div>
+        <div class="pmt" onclick="pickPay(this)">
+          <div class="pmt-icon" style="background:#E0F5FF;">
+            <svg width="26" height="26" viewBox="0 0 100 100"><rect width="100" height="100" rx="18" fill="#00baf2"/><text x="50" y="64" text-anchor="middle" fill="white" font-size="24" font-weight="900" font-family="sans-serif">Ptm</text></svg>
+          </div>
+          <span>Paytm</span>
+        </div>
+        <div class="pmt" onclick="pickPay(this)">
+          <div class="pmt-icon" style="background:#EEF2FF;">
+            <svg width="26" height="26" viewBox="0 0 100 100"><rect width="100" height="100" rx="18" fill="#1E3A8A"/><text x="50" y="64" text-anchor="middle" fill="white" font-size="26" font-weight="900" font-family="sans-serif">NET</text></svg>
+          </div>
+          <span>NEFT</span>
+        </div>
+      </div>
+
+      <div class="amount-row">
+        <div>
+          <div class="amt-label">Total Amount Due</div>
+          <div class="amt-num">₹1,200</div>
+        </div>
+        <div class="amt-secure">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Encrypted &amp; Secure
+        </div>
+      </div>
+    </div>
+
+    <button class="bigcta" style="background:var(--blue);" onclick="go('hallticket')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+      PROCEED TO PAY &nbsp;·&nbsp; கட்டணம் செலுத்து
+    </button>
+  </div>
+</div>
+
+<!-- ════════════════ HALL TICKET ════════════════ -->
+<div id="p-hallticket" class="page">
+  <div class="ht-hero">
+    <div style="max-width:960px;margin:0 auto;">
+      <div class="ht-hero-label">HALL<br><span>TICKET</span></div>
+      <p style="color:rgba(255,255,255,.8);font-size:14px;font-weight:700;margin-top:10px;">நுழைவுச் சீட்டு — Present this at the venue on test day</p>
+    </div>
+  </div>
+  <div class="content">
+    <div class="ht-card">
+      <div class="ht-stripe">
+        <div style="background:#FF3B2F;"></div>
+        <div style="background:#FF8C00;"></div>
+        <div style="background:#FFD700;"></div>
+        <div style="background:#00C853;"></div>
+        <div style="background:#2979FF;"></div>
+        <div style="background:#AA00FF;"></div>
+        <div style="background:#8B4513;"></div>
+        <div style="background:#0D0D0D;"></div>
+      </div>
+      <div class="ht-header">
+        <div class="ht-logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        </div>
+        <div>
+          <div class="ht-header-title">KARATEPASS — BELT TEST 2025</div>
+          <div class="ht-header-sub">Tamil Nadu Karate Federation · தமிழ்நாடு கராத்தே சங்கம்</div>
+        </div>
+        <div class="ht-admit">ADMIT ONE</div>
+      </div>
+      <div class="ht-body">
+        <div class="ht-student-row">
+          <div class="ht-av">AK</div>
+          <div>
+            <div class="ht-sname">ARAVIND KUMAR S</div>
+            <div class="ht-ssub">GHS Coimbatore &nbsp;·&nbsp; 8th Standard</div>
+          </div>
+        </div>
+        <div class="ht-detail">
+          <span class="ht-dl">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            Belt Test
+          </span>
+          <span class="ht-dv">
+            <span class="bsw" style="background:#fff;border:1.5px solid #ccc;"></span>White
+            <span style="color:#bbb;font-size:13px;">→</span>
+            <span class="bsw" style="background:#FFD700;"></span>Yellow
+          </span>
+        </div>
+        <div class="ht-detail">
+          <span class="ht-dl">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            Date &amp; Day
+          </span>
+          <span class="ht-dv">15 July 2025, Sunday</span>
+        </div>
+        <div class="ht-detail">
+          <span class="ht-dl">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Reporting Time
+          </span>
+          <span class="ht-dv">09:00 AM</span>
+        </div>
+        <div class="ht-detail">
+          <span class="ht-dl">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            Venue
+          </span>
+          <span class="ht-dv">District Sports Complex, Coimbatore</span>
+        </div>
+        <div class="ht-qr-area">
+          <div class="qr-g" id="qrGrid"></div>
+          <div class="ht-qr-note">Scan at entry gate · நுழைவு வாயிலில் ஸ்கேன் செய்யவும்</div>
+        </div>
+      </div>
+    </div>
+
+    <button class="bigcta" style="background:var(--ink);margin-top:14px;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+      PRINT HALL TICKET &nbsp;·&nbsp; அச்சிடு
+    </button>
+  </div>
+</div>
+
+<!-- ════════════════ REFEREE ════════════════ -->
+<div id="p-referee" class="page">
+  <div class="ref-hero">
+    <div style="max-width:960px;margin:0 auto;">
+      <div class="ref-hero-label">REFEREE<br><span>SCORING</span></div>
+      <p style="color:rgba(255,255,255,.8);font-size:14px;font-weight:700;margin-top:10px;">நடுவர் மதிப்பீடு — Tap + or − to award scores</p>
+      <div class="ref-student-tag">
+        <div class="ref-av-sm">AK</div>
+        <span>Aravind Kumar &nbsp;·&nbsp; White → Yellow Belt</span>
+      </div>
+    </div>
+  </div>
+  <div class="content">
+
+    <div class="score-block">
+      <div class="score-block-title">
+        <div class="sbt-dot" style="background:var(--red)"></div>
+        <div><div class="sbt-text">Athletic Score</div><div class="sbt-sub">தடகள மதிப்பெண்</div></div>
+      </div>
+      <div class="score-rows-wrap" id="athRows"></div>
+    </div>
+
+    <div class="score-block">
+      <div class="score-block-title">
+        <div class="sbt-dot" style="background:var(--blue)"></div>
+        <div><div class="sbt-text">Technical Score</div><div class="sbt-sub">தொழில்நுட்ப மதிப்பெண்</div></div>
+      </div>
+      <div class="score-rows-wrap" id="techRows"></div>
+    </div>
+
+    <div class="total-score-strip">
+      <div>
+        <div class="ts-label">Total Score</div>
+        <div class="ts-ta" style="font-size:11px;color:#666;font-weight:700;">மொத்த மதிப்பெண்</div>
+      </div>
+      <div class="ts-num" id="totalNum">70<span class="ts-of">/100</span></div>
+    </div>
+
+    <button class="bigcta" style="background:var(--red);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M22 2L11 13"/><path d="M22 2L15 22 11 13 2 9l20-7z"/></svg>
+      SUBMIT SCORE &nbsp;·&nbsp; மதிப்பெண் சமர்பிக்கவும்
+    </button>
+  </div>
+</div>
+
+<!-- ════════════════ ADMIN ════════════════ -->
+<div id="p-admin" class="page">
+  <div class="admin-hero">
+    <div style="max-width:960px;margin:0 auto;">
+      <div class="admin-hero-label">ADMIN<br><span>DASHBOARD</span></div>
+      <p style="color:rgba(255,255,255,.7);font-size:14px;font-weight:700;margin-top:10px;">நிர்வாக பலகை — Manage tests, students, fees and notifications</p>
+    </div>
+  </div>
+  <div class="content">
+
+    <div class="stat-row">
+      <div class="scard scard-red">
+        <div class="scard-icon"><svg viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div>
+        <div class="scard-num">142</div>
+        <div class="scard-lbl">Registered</div>
+      </div>
+      <div class="scard scard-orange">
+        <div class="scard-icon"><svg viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></div>
+        <div class="scard-num">₹1.7L</div>
+        <div class="scard-lbl">Collected</div>
+      </div>
+      <div class="scard scard-blue">
+        <div class="scard-icon"><svg viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+        <div class="scard-num">8</div>
+        <div class="scard-lbl">Schools</div>
+      </div>
+      <div class="scard scard-green">
+        <div class="scard-icon"><svg viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+        <div class="scard-num">15 Jul</div>
+        <div class="scard-lbl">Next Test</div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="gcard">
+        <div class="sec-label">
+          <div class="sec-label-dot" style="background:var(--purple)"></div>
+          <div><h2>Create Belt Test</h2><p>புதிய தேர்வு உருவாக்கு</p></div>
+        </div>
+        <div class="frow" style="margin-bottom:12px;">
+          <label class="flabel"><svg viewBox="0 0 24 24" fill="none" stroke="var(--purple)" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Date</label>
+          <input class="finput" type="date" value="2025-07-15">
+        </div>
+        <div class="frow" style="margin-bottom:12px;">
+          <label class="flabel"><svg viewBox="0 0 24 24" fill="none" stroke="var(--purple)" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Time</label>
+          <input class="finput" type="time" value="09:00">
+        </div>
+        <div class="frow">
+          <label class="flabel"><svg viewBox="0 0 24 24" fill="none" stroke="var(--purple)" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> Location</label>
+          <input class="finput" type="text" placeholder="Venue name">
+        </div>
+      </div>
+      <div class="gcard">
+        <div class="sec-label">
+          <div class="sec-label-dot" style="background:var(--orange)"></div>
+          <div><h2>Fee Management</h2><p>கட்டண நிர்வாகம்</p></div>
+        </div>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead><tr><th>From</th><th>To</th><th>Fee</th></tr></thead>
+            <tbody id="feeTable"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="gcard">
+      <div class="sec-label">
+        <div class="sec-label-dot" style="background:var(--blue)"></div>
+        <div><h2>Student Management</h2><p>மாணவர் நிர்வாகம்</p></div>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>Name</th><th>School</th><th>Belt Test</th><th>Status</th></tr></thead>
+          <tbody id="studentTable"></tbody>
+        </table>
+      </div>
+      <div class="action-strip">
+        <button class="abtn ag">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Send WhatsApp Invite
+        </button>
+        <button class="abtn ao">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          Export to Excel
+        </button>
+        <button class="abtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
+          Generate Certificates
+        </button>
+      </div>
+    </div>
+
+    <div class="gcard">
+      <div class="sec-label">
+        <div class="sec-label-dot" style="background:var(--green)"></div>
+        <div><h2>WhatsApp Notifications</h2><p>வாட்ஸ்அப் அறிவிப்புகள்</p></div>
+      </div>
+      <div id="notifRows"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const belts=[
+  {from:'White',to:'Yellow',fc:'#F5F5F5',tc:'#FFD700',fb:'#ddd',fee:1200},
+  {from:'Yellow',to:'Orange',fc:'#FFD700',tc:'#FF8C00',fb:null,fee:1200},
+  {from:'Orange',to:'Green',fc:'#FF8C00',tc:'#00C853',fb:null,fee:1400},
+  {from:'Green',to:'Blue',fc:'#00C853',tc:'#2979FF',fb:null,fee:1500},
+  {from:'Blue',to:'Purple',fc:'#2979FF',tc:'#AA00FF',fb:null,fee:1500},
+  {from:'Purple',to:'Brown',fc:'#AA00FF',tc:'#8B4513',fb:null,fee:1800},
+  {from:'Brown',to:'Black',fc:'#8B4513',tc:'#0D0D0D',fb:null,fee:2000},
+];
+
+const ath=[
+  {k:'speed',e:'Speed',t:'வேகம்',bg:'#FFEEE8',ic:'#FF3B2F',icon:'<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>',v:7},
+  {k:'balance',e:'Balance',t:'சமநிலை',bg:'#FFF3E0',ic:'#FF8C00',icon:'<line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',v:6},
+  {k:'power',e:'Power',t:'சக்தி',bg:'#FFF8E0',ic:'#FFB300',icon:'<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',v:8},
+  {k:'rhythm',e:'Rhythm',t:'தாளம்',bg:'#F3E8FF',ic:'#AA00FF',icon:'<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',v:7},
+];
+
+const tec=[
+  {k:'stances',e:'Stances',t:'நிலைகள்',bg:'#E8F0FF',ic:'#2979FF',icon:'<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/>',v:7},
+  {k:'techniques',e:'Techniques',t:'நுட்பங்கள்',bg:'#E8FFF0',ic:'#00C853',icon:'<path d="M14.5 10c-.83 0-1.5-.67-1.5-1.5v-5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5v5c0 .83-.67 1.5-1.5 1.5z"/><circle cx="14.5" cy="5" r="1"/>',v:6},
+  {k:'movements',e:'Movements',t:'இயக்கங்கள்',bg:'#FFEEE8',ic:'#FF3B2F',icon:'<polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/>',v:7},
+  {k:'breathing',e:'Breathing',t:'சுவாசம்',bg:'#E8F0FF',ic:'#2979FF',icon:'<path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 12c0-4 4-8 8-8"/>',v:8},
+  {k:'focus',e:'Focus',t:'கவனம்',bg:'#F3E8FF',ic:'#AA00FF',icon:'<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/>',v:7},
+  {k:'timing',e:'Timing',t:'நேரம்',bg:'#FFF8E0',ic:'#FFB300',icon:'<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',v:7},
+];
+
+const scores={};
+
+function buildBeltPicker(){
+  const c=document.getElementById('bpicker');
+  belts.forEach((b,i)=>{
+    const d=document.createElement('div');
+    d.className='bpick'+(i===0?' on':'');
+    d.setAttribute('data-i',i);
+    d.onclick=()=>{ document.querySelectorAll('.bpick').forEach(x=>x.classList.remove('on')); d.classList.add('on'); };
+    d.innerHTML=`
+      <div class="bpick-bar">
+        <div class="bbar" style="background:${b.fc};${b.fb?'border:2px solid '+b.fb:''}"></div>
+        <svg class="barr" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#bbb" stroke-width="3"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+        <div class="bbar" style="background:${b.tc}"></div>
+      </div>
+      <div class="bpick-name">${b.from} → ${b.to}</div>
+      <div class="bpick-fee">₹${b.fee.toLocaleString()}</div>
+      <div class="bpick-tick">
+        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+    `;
+    c.appendChild(d);
+  });
+}
+
+function buildScoreRows(data, cid){
+  const c=document.getElementById(cid);
+  data.forEach(item=>{
+    scores[item.k]=item.v;
+    const row=document.createElement('div');
+    row.className='srow';
+    row.innerHTML=`
+      <div class="srow-icon" style="background:${item.bg};">
+        <svg viewBox="0 0 24 24" fill="none" stroke="${item.ic}" stroke-width="2">${item.icon}</svg>
+      </div>
+      <div class="srow-info">
+        <div class="srow-en">${item.e}</div>
+        <div class="srow-ta">${item.t}</div>
+      </div>
+      <div class="srow-ctrl">
+        <button class="sbtn" onclick="adj('${item.k}',-1,this)">−</button>
+        <div class="sv" id="sv-${item.k}">${item.v}</div>
+        <button class="sbtn" onclick="adj('${item.k}',1,this)">+</button>
+        <div class="s10">/10</div>
+      </div>
+    `;
+    c.appendChild(row);
+  });
+}
+
+function adj(k,d,btn){
+  scores[k]=Math.max(0,Math.min(10,scores[k]+d));
+  document.getElementById('sv-'+k).textContent=scores[k];
+  btn.style.transform='scale(0.85)';
+  setTimeout(()=>{btn.style.transform=''},130);
+  const t=Object.values(scores).reduce((a,b)=>a+b,0);
+  document.getElementById('totalNum').innerHTML=t+'<span class="ts-of">/100</span>';
+}
+
+function buildFeeTable(){
+  const t=document.getElementById('feeTable');
+  belts.forEach(b=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+      <td><span style="display:flex;align-items:center;gap:6px;font-weight:700;">
+        <span style="width:11px;height:11px;border-radius:50%;background:${b.fc};${b.fb?'border:1.5px solid '+b.fb:''};flex-shrink:0;display:inline-block;"></span>${b.from}
+      </span></td>
+      <td><span style="display:flex;align-items:center;gap:6px;">
+        <span style="width:11px;height:11px;border-radius:50%;background:${b.tc};display:inline-block;flex-shrink:0;"></span>${b.to}
+      </span></td>
+      <td style="font-family:'Bebas Neue',sans-serif;font-size:17px;color:var(--orange);">₹${b.fee.toLocaleString()}</td>
+    `;
+    t.appendChild(tr);
+  });
+}
+
+function buildStudents(){
+  const data=[
+    {n:'Aravind Kumar S',s:'GHS Coimbatore',b:'White → Yellow',st:'pass'},
+    {n:'Priya Lakshmi R',s:"St. Joseph's",b:'Yellow → Orange',st:'pending'},
+    {n:'Karthik Vel M',s:'GHS Coimbatore',b:'Orange → Green',st:'pass'},
+    {n:'Divya Bharathi K',s:'Govt. Hr. Sec.',b:'Green → Blue',st:'fail'},
+    {n:'Manoj Arasan T',s:"St. Joseph's",b:'White → Yellow',st:'pass'},
+  ];
+  const t=document.getElementById('studentTable');
+  data.forEach(d=>{
+    const bc=d.st==='pass'?'bp':d.st==='fail'?'bf':'bpend';
+    const bl=d.st==='pass'?'Pass':d.st==='fail'?'Fail':'Pending';
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td style="font-weight:800;">${d.n}</td><td style="color:var(--muted);">${d.s}</td><td>${d.b}</td><td><span class="badge ${bc}">${bl}</span></td>`;
+    t.appendChild(tr);
+  });
+}
+
+function buildNotifs(){
+  const data=[
+    {n:'Aravind Kumar',m:'Hall ticket ready. Test on 15 Jul at 9:00 AM. Venue: District Sports Complex.',t:'2 min ago'},
+    {n:'Priya Lakshmi',m:'Payment confirmed ₹1,200. Registration complete for White → Yellow belt test.',t:'8 min ago'},
+    {n:'GHS Coimbatore',m:'38 students registered. WhatsApp invites sent to all parents.',t:'1 hr ago'},
+  ];
+  const c=document.getElementById('notifRows');
+  data.forEach(d=>{
+    const div=document.createElement('div');
+    div.className='notif-row';
+    div.innerHTML=`
+      <div class="notif-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+      <div style="flex:1;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+          <div class="notif-name">${d.n}</div>
+          <div class="notif-time">${d.t}</div>
+        </div>
+        <div class="notif-msg">${d.m}</div>
+      </div>
+    `;
+    c.appendChild(div);
+  });
+}
+
+function buildQR(){
+  const pat=[1,1,1,1,1,1,1,0,0,1,0,1,0,1,1,0,1,0,1,0,1,1,0,1,0,1,0,1,1,0,1,0,1,0,1,1,0,1,0,1,0,1,1,0,1,0,1,0,1,1,1,1,1,1,1,0,1,0,0,0,0,0,0,0,1,0,1,0,1,1,0,1,0,0,1,1,0,0,0,1,1];
+  const g=document.getElementById('qrGrid');
+  pat.forEach(v=>{
+    const c=document.createElement('div');
+    c.className='qc';
+    c.style.cssText=`width:10px;height:10px;background:${v?'#0D0D0D':'transparent'};`;
+    g.appendChild(c);
+  });
+}
+
+function pickPay(el){ document.querySelectorAll('.pmt').forEach(p=>p.classList.remove('on')); el.classList.add('on'); }
+
+function go(id){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.npill').forEach(b=>b.classList.remove('on'));
+  document.getElementById('p-'+id).classList.add('on');
+  document.querySelector(`.npill[data-page="${id}"]`).classList.add('on');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+buildBeltPicker();
+buildScoreRows(ath,'athRows');
+buildScoreRows(tec,'techRows');
+buildFeeTable();
+buildStudents();
+buildNotifs();
+buildQR();
+</script>
+</body>
+</html>

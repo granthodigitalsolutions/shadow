@@ -1,0 +1,276 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isStudentRegistrationEnabled(programType) {
+      let docId = programType == 'KARATE' ? 'systemSettings_KARATE' : (programType == 'SELAMBAM' ? 'systemSettings_SELAMBAM' : 'systemSettings');
+      let settings = get(/databases/$(database)/documents/settings/$(docId));
+      return settings == null || settings.data.studentRegistrationEnabled != false;
+    }
+
+    function isSecretary() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/secretaries/$(request.auth.uid));
+    }
+
+    // Coach is the renamed Secretary role. Kept as a separate helper (rather
+    // than renaming isSecretary() in place) so the still-live old frontend's
+    // /secretaries-collection checks keep working unchanged during the
+    // Secretary->Coach migration. Remove isSecretary() and the legacy
+    // /secretaries, /secretaryRequests, /secretarySchools blocks once the
+    // new Coach frontend has been live and stable for a few days.
+    function isCoach() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/coaches/$(request.auth.uid));
+    }
+
+    // Auth Access Control Settings
+    function getAuthSettings() {
+      return get(/databases/$(database)/documents/auth_settings/global).data;
+    }
+
+    function isSecretaryRegistrationOpen() {
+      return getAuthSettings().roles.secretary.registration.enabled == true;
+    }
+
+    // Null-safe: if auth_settings/global has not been seeded yet, Coach
+    // registration is open by default — matches the client's DEFAULT_CONFIG
+    // and avoids a missing config doc silently blocking self-registration
+    // in production.
+    function isCoachRegistrationOpen() {
+      let settings = get(/databases/$(database)/documents/auth_settings/global);
+      return settings == null || settings.data.roles.coach.registration.enabled != false;
+    }
+
+    // Note: isStudent() is intentionally omitted — student doc IDs are custom (STU_xxx),
+    // not Firebase Auth UIDs. Ownership is checked via resource.data.uid == request.auth.uid.
+
+    // Isolate Program Updates
+    // Safe for legacy docs that may not have programType field
+    function isProgramIsolated() {
+      return (
+        !('programType' in resource.data) ||
+        (
+          'programType' in request.resource.data &&
+          request.resource.data.programType == resource.data.programType
+        )
+      );
+    }
+
+    // Soft Delete Check (handles legacy docs without isDeleted field)
+    function isNotDeleted() {
+      return resource == null || !('isDeleted' in resource.data) || resource.data.isDeleted != true;
+    }
+
+    // Public visibility (for unauthenticated registration dropdowns)
+    function isPublicVisible() {
+      return true; // Allow collection reads without isDeleted filter
+    }
+
+    // Admin Permissions (Full Access)
+    match /auditLogs/{logId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if isAdmin() || (isAuthenticated() && request.resource.data.performedBy == request.auth.uid);
+    }
+    match /system/cacheVersion {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /analytics/{docId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Auth Access Control
+    match /auth_settings/{docId} {
+      allow read: if true; // Publicly readable to enforce login checks
+      allow write: if isAdmin();
+    }
+    match /auth_settings_history/{docId} {
+      allow read, write: if isAdmin();
+    }
+    // No bootstrap rule. First admin must be created via Firebase Console.
+    match /admins/{adminId} {
+      allow read: if isAdmin() || request.auth.uid == adminId;
+      allow write: if isAdmin() || request.auth.uid == adminId;
+    }
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /adminSettings/{settingId} {
+      allow read, write: if isAdmin();
+    }
+    match /programs/{programId} {
+      allow read: if isPublicVisible();
+      allow write: if isAdmin();
+    }
+    match /branches/{branchId} {
+      allow read: if isPublicVisible();
+      allow write: if isAdmin();
+    }
+
+    // Secretary Permissions (legacy — see isCoach() note above)
+    match /secretaries/{secretaryId} {
+      allow read: if isAdmin() || isSecretary() || request.auth.uid == secretaryId;
+      allow create: if isAuthenticated() && request.auth.uid == secretaryId;
+      allow update, delete: if isAdmin();
+    }
+
+    match /secretaryRequests/{requestId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if isAuthenticated() && isSecretaryRegistrationOpen();
+    }
+
+    // Links a Secretary to the Schools they manage (many-to-many)
+    match /secretarySchools/{linkId} {
+      allow read:   if isAdmin() || (isSecretary() && resource.data.secretaryId == request.auth.uid);
+      allow create: if isAdmin() || (isSecretary() && request.resource.data.secretaryId == request.auth.uid);
+      allow delete: if isAdmin() || (isSecretary() && resource.data.secretaryId == request.auth.uid);
+    }
+
+    // Coach Permissions (renamed Secretary — see isCoach() note above)
+    match /coaches/{coachId} {
+      allow read: if isAdmin() || isCoach() || request.auth.uid == coachId;
+      allow create: if isAuthenticated() && request.auth.uid == coachId;
+      allow update, delete: if isAdmin();
+    }
+
+    match /coachRequests/{requestId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if isAuthenticated() && isCoachRegistrationOpen();
+    }
+
+    // Links a Coach to the Schools they manage (many-to-many). Field name
+    // stays "secretaryId" (not renamed to coachId) — see Phase 1 plan's
+    // deferred-field-rename decision.
+    match /coachSchools/{linkId} {
+      allow read:   if isAdmin() || (isCoach() && resource.data.secretaryId == request.auth.uid);
+      allow create: if isAdmin() || (isCoach() && request.resource.data.secretaryId == request.auth.uid);
+      allow delete: if isAdmin() || (isCoach() && resource.data.secretaryId == request.auth.uid);
+    }
+
+    match /schoolFeeRequests/{requestId} {
+      allow read: if isAdmin() || isSecretary() || isCoach();
+      allow create: if (isSecretary() || isCoach()) && request.resource.data.secretaryId == request.auth.uid;
+      allow update: if isAdmin() || ((isSecretary() || isCoach()) && resource.data.secretaryId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // Students Collection
+    match /students/{studentId} {
+      // Public Registration with strict field whitelist + data validation
+      allow create: if isAdmin() || (
+        (isSecretary() || isCoach()) &&
+        request.resource.data.secretaryId == request.auth.uid &&
+        request.resource.data.paymentStatus == 'pending'
+      ) || (
+        isStudentRegistrationEnabled(request.resource.data.programType) &&
+        request.resource.data.keys().hasOnly([
+          'id', 'uid', 'name', 'gender', 'registrationType', 'schoolId', 'school', 'standard', 
+          'contact', 'whatsapp', 'beltLevel', 'beltIndex', 'stageLevel', 'beltTestId', 'batchId', 'refereeId',
+          'paymentStatus', 'testStatus', 'programType', 'program', 'programId', 'branchId', 
+          'paymentDetails', 'paymentMethod', 'paymentReference', 'paymentAmount',
+          'originalType', 'transferredFrom', 'transferredAt', 'registeredAt', 'updatedAt',
+          'secretaryId', 'pdfStatus', 'deliveryStatus', 'receiptUrl',
+          'locationName', 'locationText', 'locationAddress', 'latitude', 'longitude', 'qrUrl'
+        ]) &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 &&
+        request.resource.data.name.size() <= 100 &&
+        request.resource.data.programType in ['KARATE', 'SELAMBAM'] &&
+        (!('uid' in request.resource.data) || request.resource.data.uid == null) &&
+        (!('paymentAmount' in request.resource.data) || (
+          request.resource.data.paymentAmount is number &&
+          request.resource.data.paymentAmount >= 0
+        )) &&
+        // contact is optional but if present must be a valid phone string
+        (!('contact' in request.resource.data) || 
+          request.resource.data.contact == '' ||
+          (request.resource.data.contact is string &&
+           request.resource.data.contact.size() >= 10 &&
+           request.resource.data.contact.size() <= 16)
+        ) &&
+        // whatsapp is required
+        request.resource.data.whatsapp is string &&
+        request.resource.data.whatsapp.size() >= 10 &&
+        request.resource.data.whatsapp.size() <= 16 &&
+        // Enforce server-managed timestamps to prevent client-side injection
+        request.resource.data.registeredAt == request.time &&
+        request.resource.data.updatedAt == request.time
+      );
+        
+      allow read: if isAdmin() || isSecretary() || isCoach() ||
+                  (isNotDeleted() && isAuthenticated() && resource.data.uid == request.auth.uid);
+      allow update: if isAdmin() ||
+                    (isNotDeleted() && (isSecretary() || isCoach()) && resource.data.secretaryId == request.auth.uid && isProgramIsolated() &&
+                     // NOTE: paymentStatus/paymentMethod/paymentReference/paymentDetails are intentionally
+                     // excluded — only Admin may confirm/activate a student (see isAdmin() branch above).
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                       'pdfStatus', 'deliveryStatus', 'receiptUrl', 'updatedAt', 'program',
+                       'name', 'gender', 'standard', 'contact', 'whatsapp', 'schoolId', 'school', 'beltLevel', 'beltIndex', 'stageLevel', 'programType'
+                     ])
+                    ) ||
+                    (isNotDeleted() && (isSecretary() || isCoach()) && isProgramIsolated() &&
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                       'batchId', 'refereeId', 'updatedAt', 'program'
+                     ])
+                    );
+      allow delete: if isAdmin() || ((isSecretary() || isCoach()) && resource.data.secretaryId == request.auth.uid);
+    }
+
+    // Batches
+    match /batches/{batchId} {
+      allow read: if isAdmin() || isSecretary() || isCoach();
+      allow create, delete: if isAdmin() || isSecretary() || isCoach();
+      allow update: if isAdmin() || isSecretary() || isCoach();
+
+      // Delivery Campaigns subcollection
+      match /campaigns/{campaignId} {
+        allow read, write: if isAdmin();
+      }
+    }
+
+    // Public Reads for Registration Flow
+    match /schools/{schoolId} {
+      allow read: if isPublicVisible();
+      allow create: if isAdmin() || ((isSecretary() || isCoach()) && request.resource.data.createdBy == request.auth.uid);
+      allow update: if isAdmin() || (
+        (isSecretary() || isCoach()) && resource.data.createdBy == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'branch', 'contactPerson', 'contactNumber', 'updatedAt'
+        ])
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /beltTests/{testId} {
+      allow read: if isPublicVisible();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /feeStructure/{feeId} {
+      allow read: if isPublicVisible();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /silambanFees/{feeId} {
+      allow read: if isPublicVisible();
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}

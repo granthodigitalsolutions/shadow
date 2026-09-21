@@ -1,0 +1,107 @@
+import { Belt, ScoreCriteria } from './types';
+
+export const belts: Belt[] = [
+  { from: 'White', to: 'Yellow', fc: '#F5F5F5', tc: '#FFD700', fb: '#ddd', fee: 1200 },
+  { from: 'Yellow', to: 'Orange', fc: '#FFD700', tc: '#FF8C00', fb: null, fee: 1200 },
+  { from: 'Orange', to: 'Blue', fc: '#FF8C00', tc: '#2979FF', fb: null, fee: 1200 },
+  { from: 'Blue', to: 'Green', fc: '#2979FF', tc: '#00C853', fb: null, fee: 1500 },
+  { from: 'Green', to: 'II Brown', fc: '#00C853', tc: '#8B4513', fb: null, fee: 1500 },
+  { from: 'II Brown', to: 'I Brown', fc: '#8B4513', tc: '#8B4513', fb: null, fee: 1500 },
+  { from: 'I Brown', to: 'Black Belt', fc: '#8B4513', tc: '#0D0D0D', fb: null, fee: 2000 },
+];
+
+export const athleticCriteria: ScoreCriteria[] = [
+  {
+    k: 'speed',
+    e: 'Speed',
+    t: 'வேகம்',
+    bg: '#FFEEE8',
+    ic: '#FF3B2F',
+    icon: '<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>',
+    v: 7,
+  },
+  {
+    k: 'balance',
+    e: 'Balance',
+    t: 'சமநிலை',
+    bg: '#FFF3E0',
+    ic: '#FF8C00',
+    icon: '<line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+    v: 6,
+  },
+  {
+    k: 'power',
+    e: 'Power',
+    t: 'சக்தி',
+    bg: '#FFF8E0',
+    ic: '#FFB300',
+    icon: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+    v: 8,
+  },
+  {
+    k: 'rhythm',
+    e: 'Rhythm',
+    t: 'தாளம்',
+    bg: '#F3E8FF',
+    ic: '#AA00FF',
+    icon: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+    v: 7,
+  },
+];
+
+export const technicalCriteria: ScoreCriteria[] = [
+  {
+    k: 'stances',
+    e: 'Stances',
+    t: 'நிலைகள்',
+    bg: '#E8F0FF',
+    ic: '#2979FF',
+    icon: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/>',
+    v: 7,
+  },
+  {
+    k: 'techniques',
+    e: 'Techniques',
+    t: 'நுட்பங்கள்',
+    bg: '#E8FFF0',
+    ic: '#00C853',
+    icon: '<path d="M14.5 10c-.83 0-1.5-.67-1.5-1.5v-5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5v5c0 .83-.67 1.5-1.5 1.5z"/><circle cx="14.5" cy="5" r="1"/>',
+    v: 6,
+  },
+  {
+    k: 'movements',
+    e: 'Movements',
+    t: 'இயக்கங்கள்',
+    bg: '#FFEEE8',
+    ic: '#FF3B2F',
+    icon: '<polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/>',
+    v: 7,
+  },
+  {
+    k: 'breathing',
+    e: 'Breathing',
+    t: 'சுவாசம்',
+    bg: '#E8F0FF',
+    ic: '#2979FF',
+    icon: '<path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 12c0-4 4-8 8-8"/>',
+    v: 8,
+  },
+  {
+    k: 'focus',
+    e: 'Focus',
+    t: 'கவனம்',
+    bg: '#F3E8FF',
+    ic: '#AA00FF',
+    icon: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/>',
+    v: 7,
+  },
+  {
+    k: 'timing',
+    e: 'Timing',
+    t: 'நேரம்',
+    bg: '#FFF8E0',
+    ic: '#FFB300',
+    icon: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+    v: 7,
+  },
+];

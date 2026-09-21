@@ -1,0 +1,24 @@
+{
+  "name": "whatsapp-backend",
+  "version": "1.0.0",
+  "description": "Backend for WhatsApp Cloud API integration",
+  "main": "server.js",
+  "scripts": {
+    "start": "node api/whatsapp/send-single.js",
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "@google-cloud/tasks": "^6.2.3",
+    "@vercel/node": "^5.8.22",
+    "axios": "^1.18.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.19.2",
+    "firebase-admin": "^13.10.0",
+    "google-auth-library": "^10.9.0",
+    "jsonwebtoken": "^9.0.3"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}
