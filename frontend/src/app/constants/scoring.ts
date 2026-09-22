@@ -158,30 +158,6 @@ export function getGrade(percentage?: number): string {
   return "F";
 }
 
-// ── Lesson numbering (Examiner "Volume" navigation) ───────────────────────────
-// Lessons run 1–30 (see types/admin.ts ScoringParameter.lessonNumber). The
-// Examiner UI groups them into "volumes" of 10 lessons purely as a navigation
-// convenience — there is no separate stored "volume" field; it's always
-// derived from the single lesson number that already gets saved in
-// scoringResults[].lessonNumber, so there's nothing new to keep in sync.
-export const LESSONS_PER_VOLUME = 10;
-export const TOTAL_LESSONS = 30;
-export const VOLUME_COUNT = Math.ceil(TOTAL_LESSONS / LESSONS_PER_VOLUME);
-
-export function lessonToVolume(lessonNumber: number): number {
-  return Math.min(VOLUME_COUNT, Math.max(1, Math.ceil(lessonNumber / LESSONS_PER_VOLUME)));
-}
-
-export function lessonWithinVolume(lessonNumber: number): number {
-  return ((Math.max(1, lessonNumber) - 1) % LESSONS_PER_VOLUME) + 1;
-}
-
-export function volumeAndLessonToNumber(volume: number, lessonInVolume: number): number {
-  const v = Math.min(VOLUME_COUNT, Math.max(1, volume));
-  const l = Math.min(LESSONS_PER_VOLUME, Math.max(1, lessonInVolume));
-  return (v - 1) * LESSONS_PER_VOLUME + l;
-}
-
 // ── Ranking helpers ────────────────────────────────────────────────────────────
 
 /**
