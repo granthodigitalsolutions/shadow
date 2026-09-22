@@ -128,11 +128,26 @@ async function examinerFetch<T = any>(
 export async function verifyExaminerCode(
   code: string,
 ): Promise<{ ok: boolean; status: number; data: VerifyCodeResponse }> {
-  return examinerFetch<VerifyCodeResponse>("/verify-code", {
-    method: "POST",
-    skipAuth: true,
-    body: JSON.stringify({ code }),
-  });
+  const attempt = () =>
+    examinerFetch<VerifyCodeResponse>("/verify-code", {
+      method: "POST",
+      skipAuth: true,
+      body: JSON.stringify({ code }),
+    });
+  try {
+    return await attempt();
+  } catch (err) {
+    // fetchJson() *throws* (rather than resolving with ok:false) only for a
+    // network failure or a non-JSON response body — both symptomatic of a
+    // transient blip (cold start, a dropped packet on a flaky field
+    // connection) rather than a real "wrong code" result, which always comes
+    // back as a normal JSON {success:false} response and resolves normally
+    // without hitting this catch. Verifying a code is read-only, so retrying
+    // it once is safe — this is the same "try again in a moment" the error
+    // message already suggests, just done automatically before showing it.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    return attempt();
+  }
 }
 
 export async function getExaminerStudents(): Promise<{
