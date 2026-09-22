@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { 
  MessageCircle, CheckCircle, Clock, ChevronRight, AlertCircle, 
  Send, FileText, Check, Loader2, Search, ArrowLeft, RefreshCw,
@@ -18,6 +18,10 @@ import { useDialog } from "../../contexts/DialogContext";
 import { Batch, StudentRecord, School } from "../../types/admin";
 import { formatBatchName } from "../../utils/batchFormatters";
 import { generateFeedbackForms } from "../../utils/feedbackFormGenerator";
+import {
+  VOLUME_SIZE, ResultVolume, VolumePredicates, VolumeStatus,
+  buildVolumes, orderStudentsByBatch, summarizeVolume,
+} from "../../utils/whatsappVolumes";
 import { uploadResultPDF, deleteOldResultPDF } from "../../services/storageService";
 import { firebaseAnalyticsService } from "../../services/analyticsService";
 import { fetchJson } from "../../utils/apiFetch";
@@ -49,6 +53,17 @@ function StatCard({ icon: Icon, label, value, color }: any) {
   );
 }
 
+// Look of each volume status chip in the volume grid (blue doubles as the
+// app's "in progress / partial" colour, matching the rest of this page).
+const VOLUME_STATUS_STYLE: Record<VolumeStatus | 'processing', { label: string; chip: string }> = {
+  completed: { label: "Completed", chip: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" },
+  partial: { label: "Partially Completed", chip: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" },
+  failed: { label: "Failed", chip: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" },
+  pending: { label: "Not Started", chip: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" },
+  not_scored: { label: "Not Scored", chip: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-500" },
+  processing: { label: "Processing...", chip: "bg-blue-500 text-white" },
+};
+
 function formatBytes(bytes: number, decimals = 2) {
   if (!+bytes) return '0 Bytes';
   const k = 1024;
@@ -73,6 +88,11 @@ function formatBytes(bytes: number, decimals = 2) {
  const [isProcessingChunk, setIsProcessingChunk] = useState(false);
  const [isRetryingFailed, setIsRetryingFailed] = useState(false);
  const [chunkProgress, setChunkProgress] = useState<{ total: number; completed: number; failed: number } | null>(null);
+ // Which volume of which batch is being processed right now. The ref is a
+ // synchronous lock so a fast double-click can never start two runs (state
+ // alone updates too late to block the second click).
+ const [activeVolume, setActiveVolume] = useState<{ batchId: string; number: number } | null>(null);
+ const volumeRunLock = useRef(false);
  const [analytics, setAnalytics] = useState<any>(null);
  const [searchTerm, setSearchTerm] = useState("");
  const [isRefreshing, setIsRefreshing] = useState(false);
@@ -502,36 +522,27 @@ function formatBytes(bytes: number, decimals = 2) {
  }
  };
 
-  const MAX_STUDENTS_PER_RUN = 50;
+  // Student-level predicates shared by the volume grid, the failed list and
+  // the volume runner, so "scored" / "failed" mean one thing on this page.
+  const isScored = (s: StudentRecord) => !!s.testStatus && s.testStatus !== 'pending';
+  const isPdfFailed = (s: StudentRecord) => !!(s as any).pdfUploadError && !s.resultPdfUrl;
+  const isWhatsappFailed = (s: StudentRecord) => (s as any).whatsappStatus === 'failed';
+  const hasCurrentPdf = (s: StudentRecord) => !!s.resultPdfUrl && !pdfNeedsRegeneration(s);
 
-  // Students in this batch, in the batch's own stable studentIds order
-  // (immutable once a batch is generated), that still need PDF generation
-  // and/or a WhatsApp send, and that have actually been scored. This is the
-  // single filter that makes "Generate next N%" resumable and idempotent —
-  // no separate checkpoint/index is stored anywhere.
-  const getUnprocessedStudentsInOrder = useCallback((): StudentRecord[] => {
-    if (!selectedBatch) return [];
-    const byId = new Map(batchStudents.map(s => [s.id, s]));
-    const orderedIds = (selectedBatch.studentIds && selectedBatch.studentIds.length > 0)
-      ? selectedBatch.studentIds
-      : batchStudents.map(s => s.id);
-    const ordered: StudentRecord[] = [];
-    orderedIds.forEach(id => {
-      const s = byId.get(id);
-      if (s) ordered.push(s);
-    });
-    return ordered.filter(s => {
-      if (!s.testStatus || s.testStatus === 'pending') return false; // not graded yet
-      return !isStudentFullyProcessed(s);
-    });
-  }, [selectedBatch, batchStudents]);
+  const volumePredicates: VolumePredicates<StudentRecord> = {
+    isScored,
+    isFullyProcessed: isStudentFullyProcessed,
+    hasCurrentPdf,
+    isFailed: (s) => isPdfFailed(s) || isWhatsappFailed(s),
+  };
 
-  const computeNextSlice = useCallback((pct: number): StudentRecord[] => {
-    const unprocessed = getUnprocessedStudentsInOrder();
-    const total = selectedBatch?.studentIds?.length || batchStudents.length;
-    const sliceSize = pct >= 100 ? unprocessed.length : Math.max(1, Math.ceil(total * pct / 100));
-    return unprocessed.slice(0, Math.min(sliceSize, MAX_STUDENTS_PER_RUN));
-  }, [getUnprocessedStudentsInOrder, selectedBatch, batchStudents]);
+  // The selected batch's students in the batch's own stable order, split into
+  // volumes of VOLUME_SIZE. Generated from the real student count (never a
+  // fixed list of buttons): 5 students -> 1 volume, 296 -> 30 (29 x 10 + 6).
+  const volumes = useMemo(
+    () => buildVolumes(orderStudentsByBatch(selectedBatch?.studentIds, batchStudents)),
+    [selectedBatch?.studentIds, batchStudents]
+  );
 
   // Per-student combined step: generate/upload the PDF, then decide whether
   // this student still needs a WhatsApp send. Uses generateForStudent's
@@ -550,61 +561,83 @@ function formatBytes(bytes: number, decimals = 2) {
     return { pdfOk, needsWhatsapp };
   };
 
-  // Processes the next unprocessed slice of this size (%) for the selected
-  // batch: generate+upload each student's PDF (sequentially — the capture
-  // step shares one off-screen DOM container and can't run in parallel),
-  // then queue WhatsApp for everyone who's now ready, in one backend call.
-  const processChunk = async (pct: number) => {
-    if (!selectedBatch || isProcessingChunk || isRetryingFailed) return;
+  // Processes ONE volume: only that volume's scored students that aren't
+  // already fully processed. PDFs are generated sequentially (the capture step
+  // shares one off-screen DOM container and can't run in parallel), each student
+  // in its own try/catch so a single failure never stops the rest of the volume.
+  // Everyone whose PDF is ready is then queued for WhatsApp in one backend call
+  // for just these students; the backend skips anyone already queued/sent, so
+  // re-running a volume (e.g. to retry its failures) can't double-send.
+  const processVolume = async (volume: ResultVolume<StudentRecord>) => {
+    if (!selectedBatch || volumeRunLock.current || isProcessingChunk || isRetryingFailed) return;
+    const batch = selectedBatch;
 
-    const slice = computeNextSlice(pct);
-    if (slice.length === 0) {
-      const stillUngraded = batchStudents.some(s => !s.testStatus || s.testStatus === 'pending');
+    const targets = volume.students.filter(s => isScored(s) && !isStudentFullyProcessed(s));
+    if (targets.length === 0) {
       showToast(
-        stillUngraded
-          ? "All graded students are already processed. Some students in this batch aren't scored yet."
-          : "All students in this batch are already processed.",
+        volume.students.some(isScored)
+          ? `Volume ${volume.number} is already fully processed.`
+          : `Volume ${volume.number} has no scored students yet.`,
         "info"
       );
       return;
     }
 
+    volumeRunLock.current = true;
+    setActiveVolume({ batchId: batch.id, number: volume.number });
     setIsProcessingChunk(true);
-    setChunkProgress({ total: slice.length, completed: 0, failed: 0 });
+    setChunkProgress({ total: targets.length, completed: 0, failed: 0 });
 
     let completed = 0;
     let failed = 0;
     const toEnqueue: string[] = [];
 
     try {
-      for (const student of slice) {
+      for (const student of targets) {
         const { pdfOk, needsWhatsapp } = await processStudentChunkStep(student);
         if (pdfOk) completed++; else failed++;
         if (needsWhatsapp) toEnqueue.push(student.id);
 
-        setChunkProgress({ total: slice.length, completed, failed });
-        await firebaseBatchService.update(selectedBatch.id, {
-          batchGenerationProgress: { total: slice.length, completed, failed, skipped: 0 }
-        });
+        setChunkProgress({ total: targets.length, completed, failed });
+        // Progress bookkeeping is best-effort — never let it abort the volume.
+        try {
+          await firebaseBatchService.update(batch.id, {
+            batchGenerationProgress: { total: targets.length, completed, failed, skipped: 0 }
+          });
+        } catch (e) {
+          console.warn("[Volume] Could not save progress:", e);
+        }
       }
 
       let queuedMessage = "";
+      let queueFailed = false;
       if (toEnqueue.length > 0) {
-        const { ok, data } = await fetchJson(`${import.meta.env.VITE_API_BASE_URL}/api/whatsapp/send-bulk-results`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ batchId: selectedBatch.id, examDate: resolveExamDate(selectedBatch), studentIds: toEnqueue })
-        });
-        queuedMessage = (ok && data.success)
-          ? ` ${data.enqueued ?? toEnqueue.length} queued for WhatsApp.`
-          : ` WhatsApp queueing failed: ${data?.message || 'unknown error'}.`;
+        try {
+          const { ok, data } = await fetchJson(`${import.meta.env.VITE_API_BASE_URL}/api/whatsapp/send-bulk-results`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ batchId: batch.id, examDate: resolveExamDate(batch), studentIds: toEnqueue })
+          });
+          queueFailed = !(ok && data.success);
+          queuedMessage = queueFailed
+            ? ` WhatsApp queueing failed: ${data?.message || 'unknown error'}. Click the volume again to retry.`
+            : ` ${data.enqueued ?? toEnqueue.length} queued for WhatsApp.`;
+        } catch (e: any) {
+          queueFailed = true;
+          queuedMessage = ` WhatsApp queueing failed: ${e?.message || 'network error'}. PDFs are saved - click the volume again to retry.`;
+        }
       }
 
-      showToast(`${completed} PDF(s) processed, ${failed} failed.${queuedMessage}`, failed > 0 ? "warning" : "success");
+      showToast(
+        `Volume ${volume.number}: ${completed} PDF(s) processed, ${failed} failed.${queuedMessage}`,
+        failed > 0 || queueFailed ? "warning" : "success"
+      );
     } catch (err) {
-      console.error("[Chunk] Processing failed:", err);
-      showToast("An error occurred while processing this chunk.", "error");
+      console.error(`[Volume ${volume.number}] Processing failed:`, err);
+      showToast(`An error occurred while processing Volume ${volume.number}.`, "error");
     } finally {
+      volumeRunLock.current = false;
+      setActiveVolume(null);
       setIsProcessingChunk(false);
       setChunkProgress(null);
     }
@@ -897,24 +930,6 @@ function formatBytes(bytes: number, decimals = 2) {
  </div>
 
  <div className="w-full md:w-auto flex flex-wrap items-center gap-3">
-   {[10, 25, 50, 100].map(pct => {
-     const count = computeNextSlice(pct).length;
-     return (
-       <button
-         key={pct}
-         onClick={() => processChunk(pct)}
-         disabled={isProcessingChunk || isRetryingFailed || count === 0}
-         className={`px-5 py-3 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition-all ${
-           isProcessingChunk || isRetryingFailed || count === 0
-             ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed border border-zinc-200 dark:border-zinc-800"
-             : "bg-zinc-800 hover:bg-zinc-700 text-white shadow-md border border-zinc-700"
-         }`}
-       >
-         {isProcessingChunk ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-         Generate {pct}% ({count})
-       </button>
-     );
-   })}
   {(batchStudents.some(s => (s as any).whatsappStatus === 'failed') || batchStudents.some(s => (s as any).pdfUploadError && !s.resultPdfUrl)) && (
     <button
       onClick={handleRetryFailed}
@@ -931,6 +946,122 @@ function formatBytes(bytes: number, decimals = 2) {
   )}
  </div>
  </div>
+
+ {/* Result Volumes — generated from the batch's real student count, VOLUME_SIZE
+     students each. Clicking a volume processes only that volume's students. */}
+ {volumes.length > 0 && (() => {
+   const summaries = volumes.map(v => ({ volume: v, sum: summarizeVolume(v, volumePredicates) }));
+   const failedRows = volumes.flatMap(v =>
+     v.students
+       .filter(s => isScored(s) && (isPdfFailed(s) || isWhatsappFailed(s)))
+       .map(s => ({
+         key: s.id,
+         volume: v.number,
+         name: (s.name || "").trim() || `Unnamed (${s.id})`,
+         reason: isPdfFailed(s)
+           ? `PDF: ${(s as any).pdfUploadError}`
+           : `WhatsApp: ${s.failureReason || "delivery failed"}`,
+       }))
+   );
+   const runInThisBatch = activeVolume && activeVolume.batchId === selectedBatch.id ? activeVolume : null;
+   const busy = isProcessingChunk || isRetryingFailed;
+
+   return (
+     <div className="bg-white dark:bg-zinc-950 rounded-3xl border border-zinc-150 dark:border-zinc-800 shadow-sm p-6">
+       <div className="mb-4">
+         <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">Result Volumes</h3>
+         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+           {batchStudents.length} student{batchStudents.length === 1 ? "" : "s"} · {volumes.length} volume{volumes.length === 1 ? "" : "s"} of up to {VOLUME_SIZE}.
+           Each volume generates PDFs and queues WhatsApp only for its own students.
+         </p>
+       </div>
+
+       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 max-h-[460px] overflow-y-auto p-1 custom-scrollbar">
+         {summaries.map(({ volume, sum }) => {
+           const isActive = runInThisBatch?.number === volume.number;
+           const styleKey: VolumeStatus | 'processing' = isActive ? 'processing' : sum.status;
+           const style = VOLUME_STATUS_STYLE[styleKey];
+           const disabled = busy || sum.status === 'not_scored' || sum.status === 'completed';
+           const done = isActive && chunkProgress ? chunkProgress.completed + chunkProgress.failed : 0;
+           const canRun = sum.status === 'pending' || sum.status === 'partial' || sum.status === 'failed';
+           const actionLabel = sum.status === 'partial' || sum.status === 'failed' ? "Retry" : "Generate & Send";
+           return (
+             <button
+               key={volume.number}
+               onClick={() => processVolume(volume)}
+               disabled={disabled}
+               title={
+                 sum.status === 'not_scored' ? "No scored students in this volume yet"
+                 : sum.status === 'completed' ? "Every student in this volume has been processed"
+                 : `${actionLabel} students ${volume.start}-${volume.end}`
+               }
+               className={`text-left rounded-2xl border p-3.5 transition-all flex flex-col gap-2 ${
+                 isActive
+                   ? "border-blue-400 bg-blue-50/60 dark:bg-blue-900/10"
+                   : sum.status === 'completed'
+                   ? "border-emerald-200 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-900/10 cursor-default"
+                   : sum.status === 'failed'
+                   ? "border-red-200 dark:border-red-900/40 bg-red-50/40 dark:bg-red-900/10 hover:border-red-300"
+                   : "border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 hover:border-blue-300 dark:hover:border-blue-800"
+               } ${disabled && !isActive && sum.status !== 'completed' ? "opacity-60 cursor-not-allowed" : ""}`}
+             >
+               <div className="flex flex-col items-start gap-1.5">
+                 <div>
+                   <p className="font-bold text-sm text-zinc-900 dark:text-zinc-50">Volume {volume.number}</p>
+                   <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">{volume.start}–{volume.end}</p>
+                 </div>
+                 <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 leading-tight ${style.chip}`}>
+                   {isActive && <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />}
+                   {sum.status === 'completed' && !isActive && <Check className="w-3 h-3 flex-shrink-0" />}
+                   {style.label}
+                 </span>
+               </div>
+
+               <div className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 space-y-0.5">
+                 <p>{volume.students.length} Student{volume.students.length === 1 ? "" : "s"}</p>
+                 <p>Generated: <span className="text-zinc-900 dark:text-zinc-100">{sum.generated}</span> / {sum.scored}</p>
+                 {sum.failed > 0 && <p className="text-red-600 dark:text-red-400">Failed: {sum.failed}</p>}
+                 {sum.notScored > 0 && sum.status !== 'not_scored' && <p className="text-zinc-400">Not scored: {sum.notScored}</p>}
+               </div>
+
+               {isActive && chunkProgress ? (
+                 <div>
+                   <div className="h-1.5 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
+                     <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${chunkProgress.total > 0 ? Math.round((done / chunkProgress.total) * 100) : 0}%` }} />
+                   </div>
+                   <p className="text-[10px] font-bold text-blue-600 mt-1">{done} / {chunkProgress.total} done{chunkProgress.failed > 0 ? ` · ${chunkProgress.failed} failed` : ""}</p>
+                 </div>
+               ) : canRun ? (
+                 <span className={`text-[11px] font-bold flex items-center gap-1 ${sum.status === 'pending' ? "text-zinc-700 dark:text-zinc-300" : "text-blue-600"} ${busy ? "opacity-50" : ""}`}>
+                   {sum.status === 'pending' ? <FileText className="w-3 h-3" /> : <RefreshCw className="w-3 h-3" />}
+                   {actionLabel}
+                 </span>
+               ) : null}
+             </button>
+           );
+         })}
+       </div>
+
+       {failedRows.length > 0 && (
+         <div className="mt-5 rounded-2xl border border-red-200 dark:border-red-900/40 bg-red-50/60 dark:bg-red-900/10 p-4">
+           <p className="text-xs font-bold text-red-700 dark:text-red-400 flex items-center gap-1.5">
+             <AlertTriangle className="w-3.5 h-3.5" />
+             {failedRows.length} student{failedRows.length === 1 ? "" : "s"} failed — click their volume to retry
+           </p>
+           <ul className="mt-2 space-y-1 max-h-44 overflow-y-auto custom-scrollbar">
+             {failedRows.map(r => (
+               <li key={r.key} className="text-xs text-zinc-700 dark:text-zinc-300 flex flex-wrap gap-x-2">
+                 <span className="font-bold text-red-700 dark:text-red-400">Volume {r.volume}</span>
+                 <span className="font-semibold">{r.name}</span>
+                 <span className="text-zinc-500 dark:text-zinc-400 break-all">{r.reason}</span>
+               </li>
+             ))}
+           </ul>
+         </div>
+       )}
+     </div>
+   );
+ })()}
 
  {/* Progress — derived live from batchStudents so a refresh mid-processing
      never resets to zero; batchGenerationProgress (written after each
@@ -978,7 +1109,7 @@ function formatBytes(bytes: number, decimals = 2) {
        {isProcessingChunk && chunkProgress && (
          <p className="text-xs font-semibold text-blue-600 mt-4 flex items-center gap-2">
            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-           Generating PDF {chunkProgress.completed + chunkProgress.failed + 1 <= chunkProgress.total ? chunkProgress.completed + chunkProgress.failed + 1 : chunkProgress.total} / {chunkProgress.total} in this run...
+           Generating PDF {chunkProgress.completed + chunkProgress.failed + 1 <= chunkProgress.total ? chunkProgress.completed + chunkProgress.failed + 1 : chunkProgress.total} / {chunkProgress.total} {activeVolume && activeVolume.batchId === selectedBatch.id ? `in Volume ${activeVolume.number}` : "in this run"}...
          </p>
        )}
        {selectedBatch.batchGenerationProgress && !isProcessingChunk && (

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Award, CheckCircle, XCircle, AlertTriangle, LogOut, ArrowRight, Loader2 } from "lucide-react";
+import { CheckCircle, XCircle, AlertTriangle, LogOut, ArrowRight, Loader2, BookOpen, Dumbbell, Minus, Plus } from "lucide-react";
 import {
   getExaminerStudents,
   submitExaminerScore,
@@ -12,6 +12,10 @@ import {
   calculateSubScores,
   buildScoringResults,
   getGrade,
+  VOLUME_COUNT,
+  lessonToVolume,
+  lessonWithinVolume,
+  volumeAndLessonToNumber,
 } from "../../constants/scoring";
 import { ThemeToggle } from "../ui/ThemeToggle";
 
@@ -19,6 +23,8 @@ type SubmissionResult =
   | { type: "success"; percentage: number; result: "passed" | "failed" }
   | { type: "duplicate" }
   | null;
+
+type LessonNumbers = { technical: number; athletic: number };
 
 function readQueue(): string[] {
   try {
@@ -36,15 +42,10 @@ function readIndex(): number {
   return Number.isNaN(n) || n < 0 ? 0 : n;
 }
 
-function buildDefaultScores() {
-  const scores: { [key: string]: number } = {};
-  const lessonNumbers: { [key: string]: number | "" } = {};
-  SCORING_CATEGORIES.forEach((param) => {
-    scores[param.id] = 0;
-    lessonNumbers[param.id] = 1;
-  });
-  return { scores, lessonNumbers };
-}
+// Every student starts fresh at Volume 1 / Lesson 1 in each category — the
+// examiner picks the volume/lesson being tested for THIS student, never the
+// previous one's.
+const DEFAULT_LESSON_NUMBERS: LessonNumbers = { technical: 1, athletic: 1 };
 
 const clearExaminerSession = () => {
   localStorage.removeItem("examinerToken");
@@ -53,10 +54,99 @@ const clearExaminerSession = () => {
   localStorage.removeItem("examinerSessionIndex");
 };
 
-// Single-student-at-a-time scoring screen with auto-advance (explicit tap,
-// not timed) — the Examiner equivalent of ScoreStudent.tsx's "compute +
-// submit immediately" model, NOT BatchScoring.tsx's bulk-submit-at-the-end
-// model. Route-guarded by ExaminerProtectedRoute.
+// ── Volume/Lesson picker — identical component for Technical and Athletic ────
+// Pure navigation over the existing single "lesson number" field (1–30); see
+// constants/scoring.ts. No score of any kind is collected here.
+function VolumeLessonCard({
+  title,
+  icon: Icon,
+  accent,
+  lessonNumber,
+  onVolumeChange,
+  onLessonStep,
+}: {
+  title: string;
+  icon: typeof BookOpen;
+  accent: "blue" | "orange";
+  lessonNumber: number;
+  onVolumeChange: (volume: number) => void;
+  onLessonStep: (delta: number) => void;
+}) {
+  const volume = lessonToVolume(lessonNumber);
+  const lessonInVolume = lessonWithinVolume(lessonNumber);
+  const accentClasses = accent === "blue"
+    ? { bar: "bg-blue-500", icon: "bg-blue-50 dark:bg-blue-900/20 text-blue-600", chipActive: "bg-blue-500 text-white" }
+    : { bar: "bg-orange-500", icon: "bg-orange-50 dark:bg-orange-900/20 text-orange-600", chipActive: "bg-orange-500 text-white" };
+
+  return (
+    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-sm p-5 sm:p-6 relative overflow-hidden">
+      <div className={`absolute top-0 left-0 w-1 h-full ${accentClasses.bar}`} />
+      <div className="flex items-center gap-3 mb-5 pl-2">
+        <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${accentClasses.icon}`}>
+          <Icon className="w-4.5 h-4.5" />
+        </div>
+        <h3 className="text-base font-bold tracking-wide text-zinc-900 dark:text-zinc-50 uppercase">{title}</h3>
+      </div>
+
+      <div className="pl-2 space-y-5">
+        {/* Volume */}
+        <div>
+          <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2.5">Volume</p>
+          <div className="flex gap-2">
+            {Array.from({ length: VOLUME_COUNT }, (_, i) => i + 1).map((v) => (
+              <button
+                key={v}
+                onClick={() => onVolumeChange(v)}
+                className={`flex-1 py-3.5 rounded-xl font-bold text-lg transition-all active:scale-95 ${
+                  v === volume
+                    ? `${accentClasses.chipActive} shadow-sm`
+                    : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+                }`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Lesson */}
+        <div>
+          <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2.5">Lesson</p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => onLessonStep(-1)}
+              aria-label="Previous lesson"
+              className="w-14 h-14 flex-shrink-0 flex items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 active:scale-95 transition-all"
+            >
+              <Minus className="w-5 h-5" />
+            </button>
+            <div className="flex-1 h-14 rounded-2xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center">
+              <span className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">{String(lessonInVolume).padStart(2, "0")}</span>
+            </div>
+            <button
+              onClick={() => onLessonStep(1)}
+              aria-label="Next lesson"
+              className="w-14 h-14 flex-shrink-0 flex items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 active:scale-95 transition-all"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Single-student-at-a-time screen with auto-advance (explicit tap, not
+// timed). Route-guarded by ExaminerProtectedRoute.
+//
+// The examiner no longer enters a score here — Technical/Athletic score
+// entry has been removed from this screen entirely. Tapping "Next Student"
+// records full marks (100%, pass) using the existing scoring pipeline
+// (SCORING_CATEGORIES / calculateSubScores / buildScoringResults), so every
+// other part of the app (results, PDFs, WhatsApp, rankings) keeps working
+// unchanged. The Volume/Lesson pickers below only record which lesson was
+// covered, via the existing per-category lesson number field.
 export default function ExaminerScoring() {
   const navigate = useNavigate();
 
@@ -68,10 +158,7 @@ export default function ExaminerScoring() {
   const [rosterMap, setRosterMap] = useState<Record<string, ExaminerStudent>>({});
   const [passPercentage, setPassPercentage] = useState<number>(60);
 
-  const defaults = buildDefaultScores();
-  const [scores, setScores] = useState<{ [key: string]: number }>(defaults.scores);
-  const [lessonNumbers, setLessonNumbers] = useState<{ [key: string]: number | "" }>(defaults.lessonNumbers);
-  const [examinerRemarks, setExaminerRemarks] = useState("");
+  const [lessonNumbers, setLessonNumbers] = useState<LessonNumbers>(DEFAULT_LESSON_NUMBERS);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -121,10 +208,7 @@ export default function ExaminerScoring() {
   }, []);
 
   const resetForm = () => {
-    const next = buildDefaultScores();
-    setScores(next.scores);
-    setLessonNumbers(next.lessonNumbers);
-    setExaminerRemarks("");
+    setLessonNumbers(DEFAULT_LESSON_NUMBERS);
     setSubmitError(null);
   };
 
@@ -147,12 +231,17 @@ export default function ExaminerScoring() {
     navigate("/examiner/batch");
   };
 
-  const handleScoreChange = (parameterId: string, value: number, maxPoints: number) => {
-    setScores((prev) => ({ ...prev, [parameterId]: Math.min(Math.max(0, value), maxPoints) }));
+  const handleVolumeChange = (category: keyof LessonNumbers, volume: number) => {
+    setLessonNumbers((prev) => ({ ...prev, [category]: volumeAndLessonToNumber(volume, lessonWithinVolume(prev[category])) }));
   };
 
-  const handleLessonChange = (parameterId: string, value: number | "") => {
-    setLessonNumbers((prev) => ({ ...prev, [parameterId]: value === "" ? "" : Math.max(1, value) }));
+  const handleLessonStep = (category: keyof LessonNumbers, delta: number) => {
+    setLessonNumbers((prev) => {
+      const volume = lessonToVolume(prev[category]);
+      const nextLesson = lessonWithinVolume(prev[category]) + delta;
+      const clamped = Math.min(10, Math.max(1, nextLesson));
+      return { ...prev, [category]: volumeAndLessonToNumber(volume, clamped) };
+    });
   };
 
   const isComplete = sessionIndex >= queue.length;
@@ -164,15 +253,16 @@ export default function ExaminerScoring() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const techScore = scores["technical"] ?? 0;
-      const athScore = (scores as any)["athletic"] ?? (scores as any)["athletics"] ?? 0;
+      // Full marks in both categories — see the file-level comment above.
+      const techScore = SCORING_CATEGORIES.find((c) => c.id === "technical")?.maxPoints ?? 0;
+      const athScore = SCORING_CATEGORIES.find((c) => c.id === "athletic")?.maxPoints ?? 0;
       const totalScore = techScore + athScore;
       const maxScore = SCORING_CATEGORIES.reduce((sum, p) => sum + p.maxPoints, 0);
       const percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
       const passed = percentage >= passPercentage;
 
       const subCategoryResults = calculateSubScores(techScore, athScore, currentStudent.programType);
-      const scoringResultsPayload = buildScoringResults(techScore, athScore, lessonNumbers as any);
+      const scoringResultsPayload = buildScoringResults(techScore, athScore, lessonNumbers);
 
       const { status, data } = await submitExaminerScore({
         studentId: currentStudent.id,
@@ -182,7 +272,6 @@ export default function ExaminerScoring() {
         subCategoryResults,
         percentage,
         result: passed ? "passed" : "failed",
-        examinerRemarks: examinerRemarks || undefined,
         lessonNumbers,
       });
 
@@ -338,7 +427,9 @@ export default function ExaminerScoring() {
     );
   }
 
-  // ── Scoring form ──────────────────────────────────────────────────────────
+  // ── Main screen — student info + Volume/Lesson pickers only ──────────────
+  const belt = currentStudent.beltLevel || (currentStudent.stageLevel != null ? `Stage ${currentStudent.stageLevel}` : "—");
+
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
       <div className="bg-zinc-950 text-white p-4 border-b-4 border-blue-500 sticky top-0 z-10">
@@ -357,8 +448,18 @@ export default function ExaminerScoring() {
             {currentStudent.name}
           </h1>
           <p className="text-sm font-medium text-zinc-400 mt-1">
-            {currentStudent.school} &bull; {currentStudent.beltLevel || (currentStudent.stageLevel != null ? `Stage ${currentStudent.stageLevel}` : "—")}
+            {currentStudent.school} &bull; {belt}
           </p>
+          <div className="flex items-center gap-5 mt-3">
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pass</span>
+              <span className="text-sm font-bold text-emerald-400">{passPercentage}%</span>
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Grade</span>
+              <span className="text-sm font-bold text-blue-400">{getGrade(passPercentage)}</span>
+            </div>
+          </div>
           <div className="w-full bg-zinc-800 rounded-full h-2 mt-4 overflow-hidden">
             <div
               className="bg-blue-500 h-2 rounded-full transition-all duration-500"
@@ -376,82 +477,23 @@ export default function ExaminerScoring() {
           </div>
         )}
 
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-sm p-5 sm:p-6">
-          <h3 className="text-lg font-bold mb-5 flex items-center gap-3 text-zinc-900 dark:text-zinc-50">
-            <div className="w-8 h-8 bg-blue-50 dark:bg-blue-900/20 rounded-lg flex items-center justify-center">
-              <Award className="w-4 h-4 text-blue-600" />
-            </div>
-            Scoring Parameters
-          </h3>
+        <VolumeLessonCard
+          title="Technical"
+          icon={BookOpen}
+          accent="blue"
+          lessonNumber={lessonNumbers.technical}
+          onVolumeChange={(v) => handleVolumeChange("technical", v)}
+          onLessonStep={(d) => handleLessonStep("technical", d)}
+        />
 
-          <div className="space-y-6">
-            {SCORING_CATEGORIES.map((param) => (
-              <div key={param.id} className="bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-1 h-full bg-blue-500 rounded-l-2xl" />
-                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4 pl-2">
-                  <div>
-                    <h4 className="text-base font-bold text-zinc-900 dark:text-zinc-50 mb-3">{param.name}</h4>
-                    <div className="flex items-center gap-3">
-                      <label className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Lesson No.</label>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        value={lessonNumbers[param.id] === "" ? "" : lessonNumbers[param.id]}
-                        onFocus={(e) => e.target.select()}
-                        onBlur={(e) => {
-                          if (e.target.value === "") handleLessonChange(param.id, 1);
-                        }}
-                        onChange={(e) => {
-                          const val = e.target.value.replace(/[^0-9]/g, "");
-                          handleLessonChange(param.id, val === "" ? "" : parseInt(val, 10));
-                        }}
-                        className="w-20 px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-sm font-bold text-zinc-900 dark:text-zinc-50 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all text-center"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-start sm:items-end gap-1">
-                    <span className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Score</span>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="number"
-                        value={scores[param.id]}
-                        onChange={(e) => handleScoreChange(param.id, parseInt(e.target.value, 10) || 0, param.maxPoints)}
-                        className="w-24 px-3 py-3 bg-white dark:bg-zinc-900 border-2 border-blue-200 dark:border-blue-900/50 rounded-xl text-2xl font-bold text-blue-600 text-center focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
-                        min={0}
-                        max={param.maxPoints}
-                      />
-                      <span className="text-lg font-bold text-zinc-400">/ {param.maxPoints}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4 pl-2">
-                  <span className="text-xs font-bold text-zinc-400 w-4">0</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={param.maxPoints}
-                    value={scores[param.id]}
-                    onChange={(e) => handleScoreChange(param.id, parseInt(e.target.value, 10), param.maxPoints)}
-                    className="flex-1 h-2.5 bg-zinc-200 dark:bg-zinc-700 rounded-full appearance-none cursor-pointer accent-blue-500"
-                  />
-                  <span className="text-xs font-bold text-zinc-400 w-8 text-right">{param.maxPoints}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-sm p-5 sm:p-6">
-          <h4 className="font-bold text-zinc-900 dark:text-zinc-50 mb-2">Examiner Remarks (Optional)</h4>
-          <textarea
-            value={examinerRemarks}
-            onChange={(e) => setExaminerRemarks(e.target.value)}
-            placeholder="Add any specific feedback, technical corrections, or athletic observations..."
-            className="w-full h-28 px-3 py-2 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl text-sm focus:border-blue-500 focus:outline-none resize-none text-zinc-900 dark:text-zinc-50"
-          />
-        </div>
+        <VolumeLessonCard
+          title="Athletic"
+          icon={Dumbbell}
+          accent="orange"
+          lessonNumber={lessonNumbers.athletic}
+          onVolumeChange={(v) => handleVolumeChange("athletic", v)}
+          onLessonStep={(d) => handleLessonStep("athletic", d)}
+        />
 
         <button
           onClick={handleSubmit}
@@ -464,7 +506,10 @@ export default function ExaminerScoring() {
               Submitting...
             </>
           ) : (
-            "Submit Score"
+            <>
+              Next Student
+              <ArrowRight className="w-5 h-5" />
+            </>
           )}
         </button>
       </div>

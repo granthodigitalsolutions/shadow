@@ -73,6 +73,7 @@ const ResultManagement         = lazyWithRetry(() => import("./components/admin/
 const SchoolManagement         = lazyWithRetry(() => import("./components/admin/SchoolManagement"));
 const BatchManagement          = lazyWithRetry(() => import("./components/admin/BatchManagement"));
 const CoachManagement      = lazyWithRetry(() => import("./components/admin/CoachManagement"));
+const PaymentManagement    = lazyWithRetry(() => import("./components/admin/PaymentManagement"));
 const AdminSchoolDetail        = lazyWithRetry(() => import("./components/admin/AdminSchoolDetail"));
 const BatchMonitoringDashboard = lazyWithRetry(() => import("./components/admin/monitoring/BatchMonitoringDashboard"));
 const ManageBeltTests          = lazyWithRetry(() => import("./components/admin/ManageBeltTests"));
@@ -367,6 +368,7 @@ const router = createBrowserRouter([
       { path: "/admin/:program/schools",                          element: <SchoolManagement /> },
       { path: "/admin/:program/schools/:schoolId/batches",        element: <BatchManagement /> },
       { path: "/admin/:program/coaches",                      element: <CoachManagement /> },
+      { path: "/admin/:program/payments",                     element: <PaymentManagement /> },
       { path: "/admin/:program/coaches/:coachId/schools/:schoolId", element: <AdminSchoolDetail /> },
       { path: "/admin/:program/students",                         element: <StudentManagement /> },
       { path: "/admin/:program/results",                          element: <ResultManagement /> },

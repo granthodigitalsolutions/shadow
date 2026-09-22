@@ -1,6 +1,6 @@
 import { ReactNode, useState, useEffect, useTransition } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { LogOut, LayoutDashboard, Users, ClipboardList, DollarSign, Calendar, Bell, School, Settings, Menu, X, ChevronRight, MoreHorizontal, MessageCircle, UserCircle, Layers, Tag, Shield, Activity } from "lucide-react";
+import { LogOut, LayoutDashboard, Users, ClipboardList, DollarSign, Calendar, Bell, School, Settings, Menu, X, ChevronRight, MoreHorizontal, MessageCircle, UserCircle, Layers, Tag, Shield, Activity, CreditCard } from "lucide-react";
 import { firebaseAuthService } from "../../services/firebaseAuth";
 import { useProgram } from "../../contexts/ProgramContext";
 import ProgramSwitcher from "./ProgramSwitcher";
@@ -67,6 +67,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
  { path: `/admin/${program}/whatsapp-results`, icon: MessageCircle, label: "Send Results" },
  { path: `/admin/${program}/manage-belt-tests`, icon: Calendar, label: currentProgram === 'SELAMBAM' ? "Stage Tests" : "Belt Tests" },
  { path: `/admin/${program}/coaches`, icon: Users, label: "Coaches" },
+ { path: `/admin/${program}/payments`, icon: CreditCard, label: "Payments" },
  { path: `/admin/${program}/fee-structure`, icon: DollarSign, label: "Fees" },
  { path: `/admin/${program}/stickers`, icon: Tag, label: "Stickers" },
  { path: `/admin/${program}/auth-settings`, icon: Shield, label: "Auth Settings" },

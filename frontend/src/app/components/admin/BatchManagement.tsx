@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
-import { Layers, Users, ArrowLeft, Trash2, Clock, CheckCircle, PlayCircle, X, UserCircle, School as SchoolIcon, ChevronDown, ChevronUp, AlertCircle, Info, RotateCcw, Wand2, Copy, Sparkles, KeyRound } from "lucide-react";
+import { Layers, Users, ArrowLeft, Trash2, Clock, CheckCircle, PlayCircle, X, UserCircle, School as SchoolIcon, ChevronDown, ChevronUp, AlertCircle, Info, RotateCcw, Wand2, Copy, Sparkles, KeyRound, FileDown } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { firebaseBatchService, firebaseBeltTestService, firebaseSchoolService, firebaseStudentService } from "../../services/firebaseData";
 import AdminLayout from "./AdminLayout";
@@ -53,6 +53,16 @@ export default function BatchManagement() {
  const [generateForm, setGenerateForm] = useState({ beltTestId: "", belt: "" });
  const [generating, setGenerating] = useState(false);
  const [generatedResult, setGeneratedResult] = useState<Batch | null>(null);
+ // Two entry points share the one modal: "all" (Generate All Batches — one batch
+ // per Belt/Stage that has eligible students) and "selective" (the original
+ // manual Belt/Stage picker).
+ const [generateMode, setGenerateMode] = useState<"all" | "selective">("selective");
+ const [generatedAllResult, setGeneratedAllResult] = useState<{
+ created: { belt: string; batch: Batch }[];
+ skipped: string[];
+ failed: { belt: string; message: string }[];
+ } | null>(null);
+ const [generateProgress, setGenerateProgress] = useState<{ done: number; total: number } | null>(null);
 
  // --- Generate Code (Phase 4) — lets Admin retrofit a Phase-3-less legacy
  // batch (no `code`) with a code so its remaining pending students become
@@ -166,10 +176,122 @@ export default function BatchManagement() {
  });
  }, [allStudents, targetSchoolId, isIndividual, generateForm.beltTestId, generateForm.belt]);
 
+ // Eligible students per Belt/Stage for the selected test, using the same
+ // belt/stage list and the same filterEligibleStudents() as Selective Generate.
+ // Students already in a batch are never eligible, which is what stops a second
+ // "Generate All" from duplicating batches.
+ const allModeGroups = useMemo(() => {
+ if (!targetSchoolId || !generateForm.beltTestId) return [];
+ return generateBeltOptions.map((belt) => ({
+ belt,
+ count: filterEligibleStudents(allStudents, {
+ targetSchoolId,
+ isIndividual,
+ beltTestId: generateForm.beltTestId,
+ belt,
+ }).length,
+ }));
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [allStudents, targetSchoolId, isIndividual, generateForm.beltTestId, generateSelectedTest?.programType]);
+ const allModeEligible = allModeGroups.filter((g) => g.count > 0);
+ const allModeTotal = allModeEligible.reduce((sum, g) => sum + g.count, 0);
+
  const closeGenerateModal = () => {
  setShowGenerateModal(false);
  setGenerateForm({ beltTestId: "", belt: "" });
  setGeneratedResult(null);
+ setGeneratedAllResult(null);
+ setGenerateProgress(null);
+ };
+
+ // generateBatch() marks students as batched in Firestore but this page's
+ // student cache is loaded once — re-read it so eligibility counts are current.
+ const refreshStudents = async () => {
+ try {
+ const programFilter = currentProgram === 'ALL' ? undefined : currentProgram as 'KARATE' | 'SELAMBAM';
+ setAllStudents(await firebaseStudentService.getAll(programFilter));
+ } catch (error) {
+ console.error("Error refreshing students:", error);
+ }
+ };
+
+ const openGenerateModal = (mode: "all" | "selective") => {
+ setGenerateMode(mode);
+ setShowGenerateModal(true);
+ refreshStudents();
+ };
+
+ // Generate All Batches: one batch per Belt/Stage that currently has eligible
+ // students, created one after another through the existing generateBatch()
+ // (so codes, numbering and student assignment are unchanged — and each call
+ // re-reads fresh data, so batch numbers increment correctly). Belts with no
+ // eligible students are skipped; one belt failing doesn't stop the rest.
+ const handleGenerateAll = async () => {
+ if (!targetSchoolId || !generateForm.beltTestId) {
+ showToast("Please select a belt test", "error");
+ return;
+ }
+ if (generating) return;
+ setGenerating(true);
+ try {
+ const programFilter = currentProgram === 'ALL' ? undefined : currentProgram as 'KARATE' | 'SELAMBAM';
+ const freshStudents = await firebaseStudentService.getAll(programFilter);
+ setAllStudents(freshStudents);
+
+ const groups = generateBeltOptions.map((belt) => ({
+ belt,
+ count: filterEligibleStudents(freshStudents, {
+ targetSchoolId,
+ isIndividual,
+ beltTestId: generateForm.beltTestId,
+ belt,
+ }).length,
+ }));
+ const toGenerate = groups.filter((g) => g.count > 0);
+ const skipped = groups.filter((g) => g.count === 0).map((g) => g.belt);
+ if (toGenerate.length === 0) {
+ showToast("No eligible students found", "error");
+ return;
+ }
+
+ const programType = generateSelectedTest?.programType ?? (currentProgram === "SELAMBAM" ? "SELAMBAM" : "KARATE");
+ const created: { belt: string; batch: Batch }[] = [];
+ const failed: { belt: string; message: string }[] = [];
+ setGenerateProgress({ done: 0, total: toGenerate.length });
+ for (const group of toGenerate) {
+ try {
+ const batch = await firebaseBatchService.generateBatch({
+ schoolId: targetSchoolId,
+ isIndividual,
+ beltTestId: generateForm.beltTestId,
+ belt: group.belt,
+ programType,
+ });
+ created.push({ belt: group.belt, batch });
+ } catch (error: any) {
+ console.error(`Error generating batch for ${group.belt}:`, error);
+ failed.push({ belt: group.belt, message: error?.message || "Error generating batch" });
+ }
+ setGenerateProgress({ done: created.length + failed.length, total: toGenerate.length });
+ }
+
+ setGeneratedAllResult({ created, skipped, failed });
+ if (created.length === 0) {
+ showToast("No batches could be generated", "error");
+ } else {
+ showToast(
+ `${created.length} batch${created.length === 1 ? "" : "es"} generated${failed.length ? `, ${failed.length} failed` : ""}`,
+ failed.length ? "info" : "success",
+ );
+ }
+ await refreshStudents();
+ } catch (error: any) {
+ console.error("Error generating all batches:", error);
+ showToast(error?.message || "Error generating batches", "error");
+ } finally {
+ setGenerating(false);
+ setGenerateProgress(null);
+ }
  };
 
  const handleGenerateBatch = async () => {
@@ -192,6 +314,7 @@ export default function BatchManagement() {
  });
  setGeneratedResult(newBatch);
  showToast("Batch generated!", "success");
+ refreshStudents();
  } catch (error: any) {
  console.error("Error generating batch:", error);
  showToast(error?.message || "Error generating batch", "error");
@@ -204,6 +327,30 @@ export default function BatchManagement() {
  if (!code) return;
  navigator.clipboard.writeText(code);
  showToast("Batch code copied!", "success");
+ };
+
+ // One-page printable QR sheet (branding + QR + batch code). jsPDF and the QR
+ // rasteriser are loaded on demand so they stay out of the page's initial bundle.
+ const [pdfDownloadingId, setPdfDownloadingId] = useState<string | null>(null);
+ const handleDownloadBatchPdf = async (batch: Batch) => {
+ if (!batch.code || pdfDownloadingId) return;
+ setPdfDownloadingId(batch.id);
+ try {
+ const { downloadBatchQrPdf } = await import("../../utils/batchQrPdf");
+ await downloadBatchQrPdf({
+ code: batch.code,
+ batchName: formatBatchName(batch),
+ schoolName: isIndividual ? "Individual Students" : school ? [school.name, school.branch].filter(Boolean).join(" - ") : undefined,
+ testName: getBeltTestName(batch),
+ studentCount: batch.studentIds?.length || 0,
+ });
+ showToast("Batch QR PDF downloaded", "success");
+ } catch (error) {
+ console.error("Error generating batch QR PDF:", error);
+ showToast("Failed to generate batch QR PDF", "error");
+ } finally {
+ setPdfDownloadingId(null);
+ }
  };
 
  const handleForceComplete = async (batch: Batch) => {
@@ -264,6 +411,16 @@ export default function BatchManagement() {
  }
  };
 
+ // Belt/Stage of a batch, read off its enrolled students (batches don't store it).
+ const getBatchBeltLabel = (batchId: string) => {
+ const labels = new Set<string>();
+ (batchStudents[batchId] || []).forEach((s) => {
+ const label = s.beltLevel || (s.stageLevel != null ? `Stage ${s.stageLevel}` : "");
+ if (label) labels.add(label);
+ });
+ return Array.from(labels).join(", ");
+ };
+
  const filteredBatches = batches.filter((b) => selectedBeltTest === "all" || b.beltTestId === selectedBeltTest);
   const getBeltTestName = (batch: Batch) => {
     const test = beltTests.find((t) => t.id === batch.beltTestId);
@@ -309,8 +466,11 @@ export default function BatchManagement() {
  </div>
  </div>
  <div className="w-full md:w-auto flex flex-col sm:flex-row gap-3">
- <button onClick={() => setShowGenerateModal(true)} className="w-full md:w-auto flex items-center justify-center gap-2 px-6 py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white font-bold rounded-xl shadow-sm dark:shadow-none dark:border dark:border-zinc-800 transition-all active:scale-95">
- <Wand2 className="w-5 h-5" /> Generate Batch
+ <button onClick={() => openGenerateModal("all")} className="w-full md:w-auto flex items-center justify-center gap-2 px-6 py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white font-bold rounded-xl shadow-sm dark:shadow-none dark:border dark:border-zinc-800 transition-all active:scale-95">
+ <Layers className="w-5 h-5" /> Generate All Batches
+ </button>
+ <button onClick={() => openGenerateModal("selective")} className="w-full md:w-auto flex items-center justify-center gap-2 px-6 py-2.5 bg-white dark:bg-zinc-950 hover:bg-indigo-50 dark:hover:bg-zinc-900 text-indigo-600 font-bold rounded-xl border border-indigo-200 dark:border-zinc-800 shadow-sm dark:shadow-none transition-all active:scale-95">
+ <Wand2 className="w-5 h-5" /> Selective Generate
  </button>
  </div>
  </div>
@@ -394,8 +554,7 @@ export default function BatchManagement() {
  <div className="bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-2xl p-12 text-center shadow-sm dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800">
  <Layers className="w-12 h-12 text-zinc-300 mx-auto mb-4"/>
  <p className="text-lg font-bold text-zinc-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300">No Batches Found</p>
- <p className="text-sm text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 mt-1 mb-6">There are no batches created for this view yet.</p>
- <button onClick={() => setShowGenerateModal(true)} className="px-6 py-2.5 bg-zinc-900 dark:bg-zinc-100 dark:bg-zinc-100 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-zinc-200 dark:hover:bg-zinc-200 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 dark:text-zinc-900 dark:text-zinc-900 rounded-xl font-semibold text-sm transition-colors">Generate Your First Batch</button>
+ <p className="text-sm text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 mt-1">There are no batches created for this view yet. Use Generate All Batches or Selective Generate above to create them.</p>
  </div>
  ) : (
  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -414,7 +573,7 @@ export default function BatchManagement() {
  <div className="flex justify-between items-start mb-4">
  <div>
  <h3 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50" style={{ fontFamily: "'Bebas Neue', sans-serif" }}>{formatBatchName(batch).toUpperCase()}</h3>
- <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider">{getBeltTestName(batch)}</p>
+ <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider">{getBeltTestName(batch)}{getBatchBeltLabel(batch.id) ? ` · ${getBatchBeltLabel(batch.id)}` : ""}</p>
  </div>
  <button onClick={() => handleDeleteBatch(batch.id)} className="p-2 bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-lg text-red-500 hover:bg-red-50 hover:border-red-200 disabled:opacity-30 disabled:cursor-not-allowed transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 absolute top-4 right-4 z-10"><Trash2 className="w-4 h-4"/></button>
  </div>
@@ -430,7 +589,8 @@ export default function BatchManagement() {
  )}
  </div>
  {batch.code ? (
- <div className="flex items-center gap-3 p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+ <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 space-y-3">
+ <div className="flex items-center gap-3">
  <div className="bg-white p-1.5 rounded-lg border border-indigo-100 flex-shrink-0">
  <QRCodeSVG value={batch.code} size={48} style={{ width: '48px', height: '48px' }} level="M" includeMargin={false} />
  </div>
@@ -440,6 +600,19 @@ export default function BatchManagement() {
  </div>
  <button onClick={() => handleCopyBatchCode(batch.code)} className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-800 px-3 py-1.5 bg-white rounded-lg border border-indigo-200 whitespace-nowrap">
  <Copy className="w-3.5 h-3.5" /> Copy
+ </button>
+ </div>
+ <button
+ onClick={() => handleDownloadBatchPdf(batch)}
+ disabled={pdfDownloadingId !== null}
+ className="w-full flex items-center justify-center gap-2 text-xs font-bold text-indigo-600 hover:text-indigo-800 px-3 py-2 bg-white rounded-lg border border-indigo-200 transition-colors disabled:opacity-50"
+ >
+ {pdfDownloadingId === batch.id ? (
+ <span className="w-3.5 h-3.5 border-2 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin" />
+ ) : (
+ <FileDown className="w-3.5 h-3.5" />
+ )}
+ Download PDF
  </button>
  </div>
  ) : (
@@ -520,15 +693,17 @@ export default function BatchManagement() {
  <div className="fixed inset-0 bg-zinc-950/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
  <div className="bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
  <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 flex flex-wrap justify-between items-center gap-3 bg-zinc-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900">
- <h3 className="font-bold text-lg text-zinc-900 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 flex items-center gap-2"><Wand2 className="w-5 h-5 text-indigo-500" /> Generate Batch</h3>
+ <h3 className="font-bold text-lg text-zinc-900 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 flex items-center gap-2">{generateMode === "all" ? <Layers className="w-5 h-5 text-indigo-500" /> : <Wand2 className="w-5 h-5 text-indigo-500" />} {generateMode === "all" ? "Generate All Batches" : "Generate Batch"}</h3>
  <button onClick={closeGenerateModal} disabled={generating} className="text-zinc-400 hover:text-zinc-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 rounded-full p-1 shadow-sm dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 border border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800"><X className="w-4 h-4"/></button>
  </div>
 
- {!generatedResult ? (
+ {!generatedResult && !generatedAllResult ? (
  <>
  <div className="p-6 space-y-4">
  <p className="text-sm text-zinc-500 dark:text-zinc-400 font-medium">
- Instantly creates one new batch pre-populated with every currently-eligible student for the selected Belt Test and Belt, along with a unique batch code and QR code.
+ {generateMode === "all"
+ ? "Creates one batch for every Belt / Stage that currently has eligible students in the selected Belt Test - each with its own batch code and QR code. Belts / Stages with no eligible students are skipped."
+ : "Instantly creates one new batch pre-populated with every currently-eligible student for the selected Belt Test and Belt, along with a unique batch code and QR code."}
  </p>
  <div>
  <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Belt / Stage Test *</label>
@@ -537,6 +712,7 @@ export default function BatchManagement() {
  {beltTests.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
  </select>
  </div>
+ {generateMode === "selective" && (
  <div>
  <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Belt / Stage *</label>
  <select value={generateForm.belt} onChange={e => setGenerateForm(p => ({ ...p, belt: e.target.value }))} disabled={!generateForm.beltTestId} className="w-full px-4 py-2.5 bg-zinc-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium bg-white dark:bg-zinc-950 dark:bg-zinc-900 text-gray-900 dark:text-zinc-50 dark:text-zinc-50 bg-transparent dark:bg-zinc-900 dark:text-zinc-50 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -544,22 +720,107 @@ export default function BatchManagement() {
  {generateBeltOptions.map(b => <option key={b} value={b}>{b}</option>)}
  </select>
  </div>
+ )}
+ {generateMode === "selective" ? (
  <div className="flex items-center justify-between gap-3 p-4 bg-indigo-50 rounded-xl border border-indigo-100">
  <span className="text-sm font-bold text-indigo-900">Eligible Students</span>
  <span className="px-3 py-1 bg-white rounded-lg text-indigo-700 font-bold text-sm border border-indigo-200">
  {generateForm.beltTestId && generateForm.belt ? `${eligibleStudentsForGenerate.length} students eligible` : '—'}
  </span>
  </div>
+ ) : (
+ <div className="bg-indigo-50 rounded-xl border border-indigo-100 overflow-hidden">
+ <div className="flex items-center justify-between gap-3 p-4">
+ <span className="text-sm font-bold text-indigo-900">Eligible Students</span>
+ <span className="px-3 py-1 bg-white rounded-lg text-indigo-700 font-bold text-sm border border-indigo-200">
+ {generateForm.beltTestId
+ ? `${allModeTotal} students in ${allModeEligible.length} batch${allModeEligible.length === 1 ? '' : 'es'}`
+ : '—'}
+ </span>
+ </div>
+ {generateForm.beltTestId && allModeEligible.length > 0 && (
+ <ul className="border-t border-indigo-100 divide-y divide-indigo-100 bg-white/60 max-h-[220px] overflow-y-auto">
+ {allModeEligible.map(g => (
+ <li key={g.belt} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
+ <span className="font-semibold text-indigo-900">{g.belt}</span>
+ <span className="font-bold text-indigo-700">{g.count} student{g.count === 1 ? '' : 's'}</span>
+ </li>
+ ))}
+ </ul>
+ )}
+ {generateForm.beltTestId && allModeEligible.length === 0 && (
+ <p className="px-4 pb-4 text-xs font-semibold text-indigo-500">No Belt / Stage has eligible students for this test.</p>
+ )}
+ {generateForm.beltTestId && allModeEligible.length > 0 && allModeGroups.length > allModeEligible.length && (
+ <p className="px-4 py-2 border-t border-indigo-100 text-[11px] font-semibold text-indigo-500">
+ {allModeGroups.length - allModeEligible.length} Belt / Stage level{allModeGroups.length - allModeEligible.length === 1 ? '' : 's'} with no eligible students will be skipped.
+ </p>
+ )}
+ {generating && generateProgress && (
+ <p className="px-4 py-2 border-t border-indigo-100 text-xs font-bold text-indigo-700">
+ Generating batch {Math.min(generateProgress.done + 1, generateProgress.total)} of {generateProgress.total}...
+ </p>
+ )}
+ </div>
+ )}
  </div>
  <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 border-t border-zinc-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 flex justify-end gap-3">
  <button onClick={closeGenerateModal} disabled={generating} className="px-5 py-2.5 text-sm font-bold text-zinc-600 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white dark:text-zinc-50 dark:hover:text-white dark:text-zinc-50 dark:hover:text-white dark:text-zinc-50 dark:text-zinc-50 transition-colors">Cancel</button>
+ {generateMode === "all" ? (
+ <button onClick={handleGenerateAll} disabled={generating || !generateForm.beltTestId || allModeEligible.length === 0} className="px-5 py-2.5 text-sm font-bold bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl shadow-sm dark:shadow-none dark:border dark:border-zinc-800 transition-colors flex items-center gap-2 disabled:opacity-50">
+ {generating ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/> : <Layers className="w-4 h-4"/>}
+ Generate All Batches
+ </button>
+ ) : (
  <button onClick={handleGenerateBatch} disabled={generating || !generateForm.beltTestId || !generateForm.belt || eligibleStudentsForGenerate.length === 0} className="px-5 py-2.5 text-sm font-bold bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl shadow-sm dark:shadow-none dark:border dark:border-zinc-800 transition-colors flex items-center gap-2 disabled:opacity-50">
  {generating ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/> : <Wand2 className="w-4 h-4"/>}
  Generate Batch
  </button>
+ )}
  </div>
  </>
- ) : (
+ ) : generatedAllResult ? (
+ <>
+ <div className="p-6 space-y-4">
+ <p className="text-sm font-bold text-zinc-900 dark:text-zinc-50 text-center">
+ {generatedAllResult.created.length} batch{generatedAllResult.created.length === 1 ? '' : 'es'} generated
+ </p>
+ <div className="space-y-2 max-h-[320px] overflow-y-auto">
+ {generatedAllResult.created.map(({ belt, batch }) => (
+ <div key={batch.id} className="flex items-center gap-3 p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+ <div className="bg-white p-1.5 rounded-lg border border-indigo-100 flex-shrink-0">
+ <QRCodeSVG value={batch.code || ""} size={48} style={{ width: '48px', height: '48px' }} level="M" includeMargin={false} />
+ </div>
+ <div className="flex-1 min-w-0">
+ <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider truncate">{belt} &middot; {batch.studentIds.length} student{batch.studentIds.length === 1 ? '' : 's'}</p>
+ <p className="text-lg font-bold text-indigo-900 tracking-widest">{batch.code}</p>
+ </div>
+ <button onClick={() => handleCopyBatchCode(batch.code)} className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-800 px-3 py-1.5 bg-white rounded-lg border border-indigo-200 whitespace-nowrap">
+ <Copy className="w-3.5 h-3.5" /> Copy
+ </button>
+ </div>
+ ))}
+ </div>
+ {generatedAllResult.failed.length > 0 && (
+ <div className="p-3 rounded-xl bg-red-50 border border-red-100 text-xs font-medium text-red-700 space-y-1">
+ {generatedAllResult.failed.map(f => (
+ <p key={f.belt}><span className="font-bold">{f.belt}:</span> {f.message}</p>
+ ))}
+ </div>
+ )}
+ {generatedAllResult.skipped.length > 0 && (
+ <p className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">
+ Skipped (no eligible students): {generatedAllResult.skipped.join(', ')}
+ </p>
+ )}
+ </div>
+ <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900 border-t border-zinc-100 dark:border-zinc-800 flex justify-end gap-3">
+ <button onClick={closeGenerateModal} className="px-5 py-2.5 text-sm font-bold bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl shadow-sm dark:shadow-none dark:border dark:border-zinc-800 transition-colors">
+ Done
+ </button>
+ </div>
+ </>
+ ) : generatedResult ? (
  <>
  <div className="p-6 space-y-4 text-center">
  <div className="flex flex-col items-center gap-3">
@@ -573,9 +834,14 @@ export default function BatchManagement() {
  <p className="text-sm text-zinc-500 dark:text-zinc-400 font-medium">
  {generatedResult.studentIds.length} student{generatedResult.studentIds.length === 1 ? '' : 's'} enrolled in this batch.
  </p>
+ <div className="flex flex-wrap items-center justify-center gap-2">
  <button onClick={() => handleCopyBatchCode(generatedResult.code)} className="flex items-center gap-2 text-sm font-bold text-indigo-600 hover:text-indigo-800 px-4 py-2 bg-indigo-50 rounded-lg border border-indigo-200">
  <Copy className="w-4 h-4" /> Copy Code
  </button>
+ <button onClick={() => handleDownloadBatchPdf(generatedResult)} disabled={pdfDownloadingId !== null} className="flex items-center gap-2 text-sm font-bold text-indigo-600 hover:text-indigo-800 px-4 py-2 bg-indigo-50 rounded-lg border border-indigo-200 disabled:opacity-50">
+ {pdfDownloadingId === generatedResult.id ? <span className="w-4 h-4 border-2 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin" /> : <FileDown className="w-4 h-4" />} Download PDF
+ </button>
+ </div>
  </div>
  </div>
  <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 border-t border-zinc-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 flex justify-end gap-3">
@@ -584,7 +850,7 @@ export default function BatchManagement() {
  </button>
  </div>
  </>
- )}
+ ) : null}
  </div>
  </div>
  )}
@@ -618,9 +884,16 @@ export default function BatchManagement() {
  <p className="text-sm text-zinc-500 dark:text-zinc-400 font-medium">
  This batch is now reachable by the Examiner code flow. Its enrolled students and any already-recorded scores are unchanged.
  </p>
+ <div className="flex flex-wrap items-center justify-center gap-2">
  <button onClick={() => handleCopyBatchCode(generateCodeModal.code || undefined)} className="flex items-center gap-2 text-sm font-bold text-indigo-600 hover:text-indigo-800 px-4 py-2 bg-indigo-50 rounded-lg border border-indigo-200">
  <Copy className="w-4 h-4" /> Copy Code
  </button>
+ {generateCodeModal.batch && (
+ <button onClick={() => handleDownloadBatchPdf({ ...generateCodeModal.batch!, code: generateCodeModal.code! })} disabled={pdfDownloadingId !== null} className="flex items-center gap-2 text-sm font-bold text-indigo-600 hover:text-indigo-800 px-4 py-2 bg-indigo-50 rounded-lg border border-indigo-200 disabled:opacity-50">
+ {pdfDownloadingId === generateCodeModal.batch.id ? <span className="w-4 h-4 border-2 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin" /> : <FileDown className="w-4 h-4" />} Download PDF
+ </button>
+ )}
+ </div>
  </div>
  ) : null}
  </div>

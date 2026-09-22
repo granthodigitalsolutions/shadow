@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import {
   Users, Search, Filter,
   ChevronDown, Check, XCircle,
-  Phone, RefreshCw, Edit2, Trash2, School as SchoolIcon, X, Calendar,
+  Phone, RefreshCw, Edit2, Trash2, School as SchoolIcon, X, Calendar, CreditCard,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { firebaseCoachService, firebaseCoachSchoolService } from "../../services/firebaseData";
@@ -196,6 +196,14 @@ export default function CoachManagement() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <Link
+                to={`/admin/${program}/payments`}
+                className="flex items-center gap-2 px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-zinc-950 rounded-xl font-bold text-sm active:scale-95 transition-all shadow-sm"
+                title="Review and approve student payments"
+              >
+                <CreditCard className="w-4 h-4" />
+                Payments
+              </Link>
               <button
                 onClick={() => fetchData()}
                 disabled={loading}

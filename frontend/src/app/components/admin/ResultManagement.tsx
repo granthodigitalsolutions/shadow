@@ -1,11 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useNavigate } from "react-router-dom";
 import {
- Search, Eye, TrendingUp, Download, FileSpreadsheet,
- ChevronDown, ChevronRight, BarChart2, School, Layers,
- UserCircle, Users, CheckCircle, XCircle, Clock,
- ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Award,
- SlidersHorizontal, X, Building2, Hash, Percent, Trophy,
+ Search, Download, FileSpreadsheet, FileText,
+ CheckCircle, XCircle, Clock,
+ ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Trophy,
+ BarChart2, Filter, RotateCcw, X,
 } from "lucide-react";
 import AdminLayout from "./AdminLayout";
 import {
@@ -19,17 +17,16 @@ import { useProgram } from "../../contexts/ProgramContext";
 import { StudentRecord, School as SchoolType, Batch, BeltTest } from "../../types/admin";
 import * as XLSX from "xlsx";
 import { formatBatchName } from "../../utils/batchFormatters";
-import { DocumentSnapshot } from "firebase/firestore";
 import { computeRankings } from "../../constants/scoring";
 import { generateFeedbackForms } from "../../utils/feedbackFormGenerator";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type ViewTab = "overview" | "schools" | "batches" | "individual";
-type StatusFilter = "all" | "pending" | "passed" | "failed" | "evaluated";
+type StatusFilter = "all" | "passed" | "failed" | "pending";
 type SortField = "name" | "score" | "percentage" | "school" | "belt" | "date";
 type SortDir = "asc" | "desc";
-type GroupBy = "none" | "school" | "batch" | "belt" | "status" | "gender";
+
+const ALL = "all";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -46,22 +43,6 @@ function passRate(students: StudentRecord[]) {
  const ev = students.filter((s) => s.testStatus === "passed" || s.testStatus === "pass" || s.testStatus === "failed" || s.testStatus === "fail");
  if (ev.length === 0) return 0;
  return Math.round((ev.filter((s) => s.testStatus === "passed" || s.testStatus === "pass").length / ev.length) * 100);
-}
-
-function groupStudents(students: StudentRecord[], groupBy: GroupBy, schools: SchoolType[], batches: Batch[], tests: BeltTest[]) {
- if (groupBy === "none") return { "All Students": students };
- const groups: Record<string, StudentRecord[]> = {};
- students.forEach((s) => {
- let key = "";
- if (groupBy === "school") key = s.school || "Unknown School";
- if (groupBy === "batch") { const b = batches.find(b => b.id === s.batchId); key = b ? `${formatBatchName(b)} – ${tests.find(t=>t.id===b.beltTestId)?.name||""}` : "Unassigned"; }
- if (groupBy === "belt") key = s.beltLevel || s.stageLevel != null ? (s.beltLevel || `Stage ${s.stageLevel}`) : "Unknown";
- if (groupBy === "status") key = (s.testStatus === "passed" || s.testStatus === "pass") ? "Passed" : (s.testStatus === "failed" || s.testStatus === "fail") ? "Failed" : "Pending";
- if (groupBy === "gender") key = s.gender || "Unknown";
- if (!groups[key]) groups[key] = [];
- groups[key].push(s);
- });
- return groups;
 }
 
 function sortStudents(students: StudentRecord[], field: SortField, dir: SortDir) {
@@ -82,7 +63,7 @@ function sortStudents(students: StudentRecord[], field: SortField, dir: SortDir)
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: string }) {
- const normalizedStatus = 
+ const normalizedStatus =
  status === "pass" ? "passed" :
  status === "fail" ? "failed" :
  status;
@@ -98,17 +79,6 @@ function StatusBadge({ status }: { status: string }) {
  <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${c.bg}`}>
  <Icon className="w-3 h-3" /> {c.label}
  </span>
- );
-}
-
-function MiniBar({ value, color = "bg-green-500" }: { value: number; color?: string }) {
- return (
- <div className="flex items-center gap-2">
- <div className="flex-1 h-1.5 bg-gray-100 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 rounded-full overflow-hidden">
- <div className={`h-full ${color} rounded-full transition-all`} style={{ width: `${Math.min(value, 100)}%` }} />
- </div>
- <span className="text-xs text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 w-8 text-right">{value}%</span>
- </div>
  );
 }
 
@@ -142,7 +112,6 @@ function SortButton({ field, current, dir, onClick }: { field: SortField; curren
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 export default function ResultManagement() {
- const navigate = useNavigate();
  const { showToast } = useToast();
  const { currentProgram } = useProgram();
  const lastFetchedProgram = useRef<string | null>(null);
@@ -156,17 +125,18 @@ export default function ResultManagement() {
  const [loading, setLoading] = useState(true);
  const [refreshing, setRefreshing] = useState(false);
 
- // ui state
- const [activeTab, setActiveTab] = useState<ViewTab>("overview");
+ // ui state — search + sort (kept from the previous tab-based page)
  const [search, setSearch] = useState("");
- const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
  const [sortField, setSortField] = useState<SortField>("name");
  const [sortDir, setSortDir] = useState<SortDir>("asc");
- const [groupBy, setGroupBy] = useState<GroupBy>("none");
- const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
- const [expandedSchools, setExpandedSchools] = useState<Set<string>>(new Set());
- const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set());
- const [showFilters, setShowFilters] = useState(false);
+
+ // multi-filter state — replaces the old Overview / By School / By Batch / Individual tabs
+ const [schoolFilter, setSchoolFilter] = useState<string>(ALL); // schoolId
+ const [batchFilter, setBatchFilter] = useState<string>(ALL); // batchId
+ const [eventFilter, setEventFilter] = useState<string>(ALL); // registrationType
+ const [genderFilter, setGenderFilter] = useState<string>(ALL);
+ const [beltFilter, setBeltFilter] = useState<string>(ALL);
+ const [statusFilter, setStatusFilter] = useState<StatusFilter>(ALL);
 
  // ── fetch ────────────────────────────────────────────────────────────────────
 
@@ -197,67 +167,135 @@ export default function ResultManagement() {
   useEffect(() => {
   if (lastFetchedProgram.current === currentProgram) return;
   lastFetchedProgram.current = currentProgram;
-  
+
   fetchData();
   }, [currentProgram]);
 
- // ── derived ──────────────────────────────────────────────────────────────────
+ // ── filter option lists (derived from the loaded result dataset — nothing hard-coded) ──
 
- const schoolStudents = useMemo(
- () => students.filter((s) => s.registrationType === "school"),
- [students]
- );
- const individualStudents = useMemo(
- () => students.filter((s) => s.registrationType === "individual"),
- [students]
- );
- const individualBatches = useMemo(
- () => batches.filter((b) => b.schoolId === "individual"),
- [batches]
- );
+ // Legacy students may only have a `school` name and no `schoolId` — fall back
+ // to matching by name against the loaded schools, same as the old By School tab did.
+ const schoolNameToId = useMemo(() => {
+ const map = new Map<string, string>();
+ schools.forEach((sc) => map.set(sc.name, sc.id));
+ return map;
+ }, [schools]);
 
- const applyFilters = (list: StudentRecord[]) => {
- let res = list;
- if (search) {
- const q = search.toLowerCase();
+ const getStudentSchoolId = (s: StudentRecord): string | undefined =>
+ s.schoolId || (s.school ? schoolNameToId.get(s.school) : undefined);
+
+ const schoolOptions = useMemo(() => {
+ const map = new Map<string, string>();
+ students.forEach((s) => {
+ if (s.registrationType !== "school") return;
+ const id = getStudentSchoolId(s);
+ if (!id) return;
+ map.set(id, schools.find((sc) => sc.id === id)?.name || s.school || "Unknown School");
+ });
+ return Array.from(map.entries())
+ .map(([id, name]) => ({ id, name }))
+ .sort((a, b) => a.name.localeCompare(b.name));
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [students, schools, schoolNameToId]);
+
+ // Batch dropdown is context-aware: when a School is selected, only that
+ // school's batches are shown (individual-session batches are excluded then,
+ // since they don't belong to any school).
+ const batchOptions = useMemo(() => {
+ const relevant = schoolFilter === ALL ? batches : batches.filter((b) => b.schoolId === schoolFilter);
+ return relevant
+ .map((b) => {
+ const testName = tests.find((t) => t.id === b.beltTestId)?.name;
+ return { id: b.id, label: `${formatBatchName(b)}${testName ? ` – ${testName}` : ""}` };
+ })
+ .sort((a, b) => a.label.localeCompare(b.label));
+ }, [batches, tests, schoolFilter]);
+
+ // If the school filter changes and the previously-selected batch no longer
+ // belongs to it, fall back to "All Batches" instead of showing a stale filter.
+ useEffect(() => {
+ if (batchFilter !== ALL && !batchOptions.some((b) => b.id === batchFilter)) {
+ setBatchFilter(ALL);
+ }
+ }, [batchOptions, batchFilter]);
+
+ const eventOptions = useMemo(
+ () => Array.from(new Set(students.map((s) => s.registrationType).filter(Boolean))).sort() as string[],
+ [students],
+ );
+ const genderOptions = useMemo(
+ () => Array.from(new Set(students.map((s) => s.gender).filter(Boolean))).sort() as string[],
+ [students],
+ );
+ const beltOptions = useMemo(() => {
+ const set = new Set<string>();
+ students.forEach((s) => {
+ const belt = s.beltLevel || (s.stageLevel != null ? `Stage ${s.stageLevel}` : "");
+ if (belt) set.add(belt);
+ });
+ return Array.from(set).sort();
+ }, [students]);
+
+ // ── ONE filtered dataset — feeds the table, the stats, and both exports ──────
+
+ const filteredResults = useMemo(() => {
+ let res = students;
+
+ if (schoolFilter !== ALL) res = res.filter((s) => getStudentSchoolId(s) === schoolFilter);
+ if (batchFilter !== ALL) res = res.filter((s) => s.batchId === batchFilter);
+ if (eventFilter !== ALL) res = res.filter((s) => s.registrationType === eventFilter);
+ if (genderFilter !== ALL) res = res.filter((s) => s.gender === genderFilter);
+ if (beltFilter !== ALL) {
+ res = res.filter((s) => (s.beltLevel || (s.stageLevel != null ? `Stage ${s.stageLevel}` : "")) === beltFilter);
+ }
+ if (statusFilter !== ALL) {
+ if (statusFilter === "passed") res = res.filter((s) => s.testStatus === "passed" || s.testStatus === "pass");
+ else if (statusFilter === "failed") res = res.filter((s) => s.testStatus === "failed" || s.testStatus === "fail");
+ else res = res.filter((s) => s.testStatus !== "passed" && s.testStatus !== "pass" && s.testStatus !== "failed" && s.testStatus !== "fail");
+ }
+ if (search.trim()) {
+ const q = search.trim().toLowerCase();
  res = res.filter(
  (s) =>
  (s.name || "").toLowerCase().includes(q) ||
  (s.id || "").toLowerCase().includes(q) ||
  (s.school || "").toLowerCase().includes(q) ||
- (s.beltLevel || "").toLowerCase().includes(q)
+ (s.beltLevel || "").toLowerCase().includes(q),
  );
  }
- if (statusFilter !== "all") {
- if (statusFilter === "evaluated") {
- res = res.filter((s) => s.testStatus === "passed" || s.testStatus === "pass" || s.testStatus === "failed" || s.testStatus === "fail");
- } else if (statusFilter === "passed") {
- res = res.filter((s) => s.testStatus === "passed" || s.testStatus === "pass");
- } else if (statusFilter === "failed") {
- res = res.filter((s) => s.testStatus === "failed" || s.testStatus === "fail");
- } else {
- res = res.filter((s) => s.testStatus === "pending" || (!s.testStatus && s.score != null));
- }
- }
+
  return sortStudents(res, sortField, sortDir);
- };
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [students, schools, schoolNameToId, schoolFilter, batchFilter, eventFilter, genderFilter, beltFilter, statusFilter, search, sortField, sortDir]);
 
  const toggleSort = (field: SortField) => {
  if (sortField === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
  else { setSortField(field); setSortDir("asc"); }
  };
 
- const toggleGroup = (key: string) =>
- setExpandedGroups((prev) => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
+ const filtersActive =
+ schoolFilter !== ALL || batchFilter !== ALL || eventFilter !== ALL ||
+ genderFilter !== ALL || beltFilter !== ALL || statusFilter !== ALL || search.trim() !== "";
 
- // ── stats (global) ────────────────────────────────────────────────────────────
+ const clearFilters = () => {
+ setSchoolFilter(ALL);
+ setBatchFilter(ALL);
+ setEventFilter(ALL);
+ setGenderFilter(ALL);
+ setBeltFilter(ALL);
+ setStatusFilter(ALL);
+ setSearch("");
+ };
 
- const allFiltered = applyFilters(students);
- const evaluated = allFiltered.filter((s) => s.testStatus === "passed" || s.testStatus === "pass" || s.testStatus === "failed" || s.testStatus === "fail");
- const passed = allFiltered.filter((s) => s.testStatus === "passed" || s.testStatus === "pass");
- const failed = allFiltered.filter((s) => s.testStatus === "failed" || s.testStatus === "fail");
- const pending = allFiltered.filter((s) => s.testStatus !== "passed" && s.testStatus !== "pass" && s.testStatus !== "failed" && s.testStatus !== "fail");
- const overallPR = passRate(allFiltered);
+ // ── stats — computed from filteredResults, so they always match what's on screen ──
+
+ const evaluated = filteredResults.filter((s) => s.testStatus === "passed" || s.testStatus === "pass" || s.testStatus === "failed" || s.testStatus === "fail");
+ const passed = filteredResults.filter((s) => s.testStatus === "passed" || s.testStatus === "pass");
+ const failed = filteredResults.filter((s) => s.testStatus === "failed" || s.testStatus === "fail");
+ const pendingResults = filteredResults.filter((s) => s.testStatus !== "passed" && s.testStatus !== "pass" && s.testStatus !== "failed" && s.testStatus !== "fail");
+ const schoolResultsCount = filteredResults.filter((s) => s.registrationType === "school").length;
+ const individualResultsCount = filteredResults.filter((s) => s.registrationType === "individual").length;
+ const overallPR = passRate(filteredResults);
  const avgScore = evaluated.length
  ? Math.round(evaluated.reduce((a, s) => a + (s.score ?? 0), 0) / evaluated.length)
  : 0;
@@ -287,11 +325,120 @@ export default function ResultManagement() {
  XLSX.writeFile(wb, `${filename}_${new Date().toISOString().split("T")[0]}.xlsx`);
  };
 
- // Compute rankings for all evaluated students (by score desc)
+ // Compute rankings for all evaluated students (by score desc) — global, over
+ // the full unfiltered dataset, since a student's rank is a property of the
+ // whole belt test cohort and must not shift as filters are applied.
  const rankMap = useMemo(() => {
  const evaluated = students.filter(s => s.score != null);
  return computeRankings(evaluated);
  }, [students]);
+
+ // ── PDF export (Excel export above is untouched) ──────────────────────────────
+
+ const batchById = useMemo(() => new Map(batches.map((b) => [b.id, b])), [batches]);
+ const programLabel = currentProgram === "SELAMBAM" ? "Silambam" : "Karate";
+
+ // Human-readable label/value for every filter that isn't "All" — used to
+ // build the PDF header so it never lists "All" filters unnecessarily.
+ const activeFilterDetails = (): Array<{ label: string; value: string }> => {
+ const items: Array<{ label: string; value: string }> = [];
+ if (schoolFilter !== ALL) items.push({ label: "School", value: schoolOptions.find((o) => o.id === schoolFilter)?.name || schoolFilter });
+ if (batchFilter !== ALL) { const b = batchById.get(batchFilter); items.push({ label: "Batch", value: b ? formatBatchName(b) : batchFilter }); }
+ if (eventFilter !== ALL) items.push({ label: "Event", value: eventFilter === "school" ? "School" : "Individual" });
+ if (genderFilter !== ALL) items.push({ label: "Gender", value: genderFilter });
+ if (beltFilter !== ALL) items.push({ label: "Belt/Stage", value: beltFilter });
+ if (statusFilter !== ALL) items.push({ label: "Status", value: statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1) });
+ if (search.trim()) items.push({ label: "Search", value: search.trim() });
+ return items;
+ };
+
+ const exportToPDF = async (
+ list: StudentRecord[],
+ cfg: {
+ title: string;
+ scopeLabel?: string;
+ fileName: string;
+ details?: Array<{ label: string; value: string }>;
+ showSchoolColumn?: boolean;
+ showBatchColumn?: boolean;
+ },
+ ) => {
+ if (list.length === 0) {
+ showToast("No results to export", "info");
+ return;
+ }
+ try {
+ const { buildResultsReportPdf } = await import("../../utils/resultPdf/generateResultsReportPdf");
+ const isPass = (s: StudentRecord) => s.testStatus === "passed" || s.testStatus === "pass";
+ const isFail = (s: StudentRecord) => s.testStatus === "failed" || s.testStatus === "fail";
+ const evaluatedList = list.filter((s) => isPass(s) || isFail(s));
+ const passedCount = list.filter(isPass).length;
+ const failedCount = list.filter(isFail).length;
+
+ const rows = list.map((s) => {
+ const rank = s.ranking ?? rankMap[s.id];
+ const batch = s.batchId ? batchById.get(s.batchId) : undefined;
+ return {
+ studentId: s.id,
+ name: (s.name || "").trim() ? s.name : `Unnamed (${s.id})`,
+ gender: s.gender || "-",
+ school: s.school || "Individual",
+ standard: s.standard || "-",
+ beltStage: s.beltLevel || (s.stageLevel != null ? `Stage ${s.stageLevel}` : "-"),
+ batch: batch ? formatBatchName(batch) : "-",
+ status: (isPass(s) ? "PASSED" : isFail(s) ? "FAILED" : "PENDING") as "PASSED" | "FAILED" | "PENDING",
+ score: s.score != null ? String(s.score) : "-",
+ percentage: s.percentage != null ? `${s.percentage}%` : "-",
+ grade: getGrade(s.percentage),
+ rank: rank != null ? `#${rank}` : "-",
+ };
+ });
+
+ const doc = buildResultsReportPdf({
+ title: cfg.title,
+ scopeLabel: cfg.scopeLabel,
+ details: [
+ ...(cfg.details ?? []),
+ { label: "Program", value: programLabel },
+ ],
+ summary: {
+ total: list.length,
+ passed: passedCount,
+ failed: failedCount,
+ pending: list.length - passedCount - failedCount,
+ passRate: passRate(list),
+ avgScore: evaluatedList.length
+ ? Math.round(evaluatedList.reduce((a, s) => a + (s.score ?? 0), 0) / evaluatedList.length)
+ : 0,
+ },
+ rows,
+ showSchoolColumn: cfg.showSchoolColumn,
+ showBatchColumn: cfg.showBatchColumn,
+ });
+ const safeName = cfg.fileName.replace(/[^a-zA-Z0-9-_]+/g, "_").replace(/^_+|_+$/g, "") || "Results";
+ doc.save(`${safeName}_${new Date().toISOString().split("T")[0]}.pdf`);
+ showToast("PDF exported", "success");
+ } catch (err) {
+ console.error("Results PDF export failed:", err);
+ showToast("Failed to export PDF", "error");
+ }
+ };
+
+ // Both export buttons at the top of the page read from filteredResults — the
+ // same array the table and the stat cards render from (single source of truth).
+ const handleExportExcel = () => exportToExcel(filteredResults, "Results");
+
+ const handleExportPDF = () => {
+ const filterItems = activeFilterDetails();
+ exportToPDF(filteredResults, {
+ title: "RESULT REPORT",
+ scopeLabel: filterItems.length > 0 ? filterItems.map((f) => `${f.label}: ${f.value}`).join(" • ") : "All Results",
+ fileName: filterItems.length > 0 ? `Results_${filterItems.map((f) => f.value).join("_")}` : "Results",
+ details: [...filterItems, { label: "Students", value: String(filteredResults.length) }],
+ showSchoolColumn: schoolFilter === ALL,
+ showBatchColumn: batchFilter === ALL,
+ });
+ };
 
  // ── render helpers ────────────────────────────────────────────────────────────
 
@@ -445,7 +592,7 @@ export default function ResultManagement() {
  Result Management
  </h1>
  <p className="text-sm text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 mt-0.5">
- {students.length} students · {passed.length} passed · {failed.length} failed · {pending.length} pending
+ {filteredResults.length} students · {passed.length} passed · {failed.length} failed · {pendingResults.length} pending
  </p>
  </div>
  <div className="flex gap-2 flex-wrap">
@@ -458,97 +605,43 @@ export default function ResultManagement() {
  Refresh
  </button>
  <button
- onClick={() => exportToExcel(allFiltered, "Results")}
+ onClick={handleExportExcel}
  className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 font-medium"
  >
  <FileSpreadsheet className="w-4 h-4" />
  Export Excel
  </button>
+ <button
+ onClick={handleExportPDF}
+ className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 font-medium"
+ >
+ <FileText className="w-4 h-4" />
+ Export PDF
+ </button>
  </div>
  </div>
 
- {/* ── Global Stats ── */}
+ {/* ── Stats — follow the currently filtered dataset ── */}
  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
- <StatCard label="Total Students" value={students.length} color="blue" />
- <StatCard label="School Students" value={schoolStudents.length} color="indigo" />
- <StatCard label="Individual" value={individualStudents.length} color="purple" />
+ <StatCard label="Total Students" value={filteredResults.length} color="blue" />
+ <StatCard label="School Students" value={schoolResultsCount} color="indigo" />
+ <StatCard label="Individual" value={individualResultsCount} color="purple" />
  <StatCard label="Passed" value={passed.length} color="green" />
  <StatCard label="Failed" value={failed.length} color="red" />
  <StatCard label="Pass Rate" value={`${overallPR}%`} color="amber" sub={`Avg score: ${avgScore}`} />
  </div>
 
- {/* ── Tabs ── */}
- <div className="flex gap-1 bg-gray-100 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 p-1 rounded-xl w-fit">
- {([
- { id: "overview", label: "Overview", icon: BarChart2 },
- { id: "schools", label: "By School", icon: School },
- { id: "batches", label: "By Batch", icon: Layers },
- { id: "individual", label: "Individual", icon: UserCircle },
- ] as { id: ViewTab; label: string; icon: any }[]).map(({ id, label, icon: Icon }) => (
- <button
- key={id}
- onClick={() => setActiveTab(id)}
- className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
- activeTab === id
- ? "bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 shadow text-blue-700"
- : "text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 hover:text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300"
- }`}
- >
- <Icon className="w-4 h-4" />
- {label}
- </button>
- ))}
- </div>
-
- {/* ── Filters Bar ── */}
- <div className="bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 rounded-xl border border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 shadow-sm dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 p-4 space-y-3">
- <div className="flex flex-col sm:flex-row gap-3">
- {/* Search */}
- <div className="flex-1 relative">
- <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
- <input
- type="text"
- placeholder="Search name, ID, school, belt…"
- value={search}
- onChange={(e) => setSearch(e.target.value)}
- className="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
- />
- {search && (
- <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400">
- <X className="w-3.5 h-3.5" />
- </button>
- )}
- </div>
-
- {/* Status filter */}
- <select
- value={statusFilter}
- onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
- className="px-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-sm text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
- >
- <option value="all">All Status</option>
- <option value="pending">Pending</option>
- <option value="evaluated">Evaluated (all)</option>
- <option value="passed">Passed</option>
- <option value="failed">Failed</option>
- </select>
-
- {/* Toggle advanced */}
- <button
- onClick={() => setShowFilters((p) => !p)}
- className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${showFilters ? "bg-blue-50 border-blue-300 text-blue-700" : "border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-gray-600 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 hover:bg-gray-50 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:bg-zinc-900"}`}
- >
- <SlidersHorizontal className="w-4 h-4" />
- Sort & Group
- </button>
- </div>
-
- {/* Advanced filters panel */}
- {showFilters && (
- <div className="flex flex-wrap gap-3 pt-2 border-t border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800">
- {/* Sort by */}
+ {/* ════════════════════════════════════════════════════════════════════ */}
+ {/* ── FILTER PANEL — replaces the old Overview/By School/By Batch/Individual tabs ── */}
+ {/* ════════════════════════════════════════════════════════════════════ */}
+ <div className="bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 rounded-xl border border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 shadow-sm dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 p-4 space-y-4">
+ <div className="flex flex-wrap items-center justify-between gap-3">
+ <h3 className="text-sm font-bold text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 uppercase tracking-wide flex items-center gap-2">
+ <Filter className="w-4 h-4 text-blue-600" />
+ Filter Results
+ </h3>
  <div className="flex items-center gap-2">
- <label className="text-xs font-semibold text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wide">Sort by</label>
+ <label className="text-xs font-semibold text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wide hidden sm:inline">Sort by</label>
  <select
  value={sortField}
  onChange={(e) => setSortField(e.target.value as SortField)}
@@ -564,392 +657,143 @@ export default function ResultManagement() {
  <button
  onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
  className="flex items-center gap-1 px-2 py-1.5 rounded-lg border border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-sm bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 hover:bg-gray-50 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:bg-zinc-900"
+ title={sortDir === "asc" ? "Ascending" : "Descending"}
  >
  {sortDir === "asc" ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />}
- {sortDir === "asc" ? "Asc" : "Desc"}
  </button>
  </div>
+ </div>
 
- {/* Group by (only in overview / individual tab) */}
- {(activeTab === "overview" || activeTab === "individual") && (
- <div className="flex items-center gap-2">
- <label className="text-xs font-semibold text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wide">Group by</label>
+ {/* Search */}
+ <div className="relative">
+ <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+ <input
+ type="text"
+ placeholder="Search name, ID, school, belt…"
+ value={search}
+ onChange={(e) => setSearch(e.target.value)}
+ className="w-full pl-9 pr-8 py-2 rounded-lg border border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
+ />
+ {search && (
+ <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400">
+ <X className="w-3.5 h-3.5" />
+ </button>
+ )}
+ </div>
+
+ {/* School / Batch / Event / Gender / Belt-Stage / Status — all combine with AND */}
+ <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+ <div>
+ <label className="block text-xs font-semibold text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wide mb-1.5">School</label>
  <select
- value={groupBy}
- onChange={(e) => setGroupBy(e.target.value as GroupBy)}
- className="px-2 py-1.5 rounded-lg border border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-sm bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
+ value={schoolFilter}
+ onChange={(e) => setSchoolFilter(e.target.value)}
+ className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-sm text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
  >
- <option value="none">None</option>
- <option value="school">School</option>
- <option value="batch">Batch</option>
- <option value="belt">Belt / Stage</option>
- <option value="status">Test Status</option>
- <option value="gender">Gender</option>
+ <option value={ALL}>All Schools</option>
+ {schoolOptions.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
  </select>
  </div>
- )}
- </div>
- )}
 
+ <div>
+ <label className="block text-xs font-semibold text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wide mb-1.5">Batch</label>
+ <select
+ value={batchFilter}
+ onChange={(e) => setBatchFilter(e.target.value)}
+ className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-sm text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
+ >
+ <option value={ALL}>All Batches</option>
+ {batchOptions.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
+ </select>
+ </div>
+
+ <div>
+ <label className="block text-xs font-semibold text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wide mb-1.5">Event</label>
+ <select
+ value={eventFilter}
+ onChange={(e) => setEventFilter(e.target.value)}
+ className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-sm text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
+ >
+ <option value={ALL}>All Events</option>
+ {eventOptions.map((v) => <option key={v} value={v}>{v === "school" ? "School" : "Individual"}</option>)}
+ </select>
+ </div>
+
+ <div>
+ <label className="block text-xs font-semibold text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wide mb-1.5">Gender</label>
+ <select
+ value={genderFilter}
+ onChange={(e) => setGenderFilter(e.target.value)}
+ className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-sm text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
+ >
+ <option value={ALL}>All Genders</option>
+ {genderOptions.map((g) => <option key={g} value={g}>{g}</option>)}
+ </select>
+ </div>
+
+ <div>
+ <label className="block text-xs font-semibold text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wide mb-1.5">Belt / Stage</label>
+ <select
+ value={beltFilter}
+ onChange={(e) => setBeltFilter(e.target.value)}
+ className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-sm text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
+ >
+ <option value={ALL}>All Belts / Stages</option>
+ {beltOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+ </select>
+ </div>
+
+ <div>
+ <label className="block text-xs font-semibold text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wide mb-1.5">Status</label>
+ <select
+ value={statusFilter}
+ onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+ className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-sm text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
+ >
+ <option value="all">All Status</option>
+ <option value="passed">Passed</option>
+ <option value="failed">Failed</option>
+ <option value="pending">Pending</option>
+ </select>
+ </div>
+ </div>
+
+ <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800">
+ <button
+ onClick={clearFilters}
+ disabled={!filtersActive}
+ className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border border-red-200 dark:border-red-900/40 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+ >
+ <RotateCcw className="w-3.5 h-3.5" />
+ Clear Filters
+ </button>
  <p className="text-xs text-gray-400">
- Showing {allFiltered.length} of {students.length} students
+ Showing {filteredResults.length} of {students.length} students
  </p>
  </div>
+ </div>
 
  {/* ════════════════════════════════════════════════════════════════════ */}
- {/* ── OVERVIEW TAB ── */}
+ {/* ── RESULT TABLE — single flat table rendered from filteredResults ── */}
  {/* ════════════════════════════════════════════════════════════════════ */}
- {activeTab === "overview" && (
- <div className="space-y-4">
- {groupBy === "none" ? (
+ {filteredResults.length === 0 ? (
+ <div className="bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 rounded-xl border border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 shadow-sm dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 p-12 text-center">
+ <Search className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+ <p className="text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 font-medium">No students match the selected filters.</p>
+ {filtersActive && (
+ <button
+ onClick={clearFilters}
+ className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-gray-100 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 hover:bg-gray-200 dark:hover:bg-zinc-700 transition-colors"
+ >
+ <RotateCcw className="w-3.5 h-3.5" /> Clear Filters
+ </button>
+ )}
+ </div>
+ ) : (
  <div className="bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 rounded-xl border border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 shadow-sm dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 overflow-hidden">
- <StudentTable list={allFiltered} />
- </div>
- ) : (
- (() => {
- const groups = groupStudents(allFiltered, groupBy, schools, batches, tests);
- return Object.entries(groups)
- .sort(([a], [b]) => a.localeCompare(b))
- .map(([key, list]) => {
- const open = expandedGroups.has(key);
- const pr = passRate(list);
- return (
- <div key={key} className="bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 rounded-xl border border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 shadow-sm dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 overflow-hidden">
- <button
- onClick={() => toggleGroup(key)}
- className="w-full flex flex-wrap items-center justify-between gap-3 px-5 py-4 hover:bg-gray-50 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:bg-zinc-900 transition-colors"
- >
- <div className="flex items-center gap-3 min-w-0">
- {open ? <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />}
- <div className="text-left min-w-0">
- <p className="font-semibold text-gray-800 dark:text-zinc-200 dark:text-zinc-200 dark:text-zinc-200 dark:text-zinc-200 truncate">{key}</p>
- <p className="text-xs text-gray-400">
- {list.length} students · {list.filter(s=>s.testStatus==="passed").length} passed · {list.filter(s=>s.testStatus==="failed").length} failed · {list.filter(s=>s.testStatus==="pending").length} pending
- </p>
- </div>
- </div>
- <div className="flex items-center gap-4 flex-shrink-0 ml-4">
- <div className="hidden sm:block w-28">
- <MiniBar value={pr} color={pr >= 80 ? "bg-green-500" : pr >= 50 ? "bg-blue-500" : "bg-red-500"} />
- </div>
- <span className="text-xs font-bold text-gray-600 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 w-10 text-right">{list.length}</span>
- </div>
- </button>
- {open && <div className="border-t border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800"><StudentTable list={list} /></div>}
- </div>
- );
- });
- })()
- )}
+ <StudentTable list={filteredResults} />
  </div>
  )}
-
- {/* ════════════════════════════════════════════════════════════════════ */}
- {/* ── BY SCHOOL TAB ── */}
- {/* ════════════════════════════════════════════════════════════════════ */}
- {activeTab === "schools" && (
- <div className="space-y-3">
- {schools.length === 0 ? (
- <div className="bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 rounded-xl border border-dashed border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 p-12 text-center">
- <School className="w-12 h-12 text-gray-300 mx-auto mb-3" />
- <p className="text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 font-medium">No schools found</p>
- </div>
- ) : (
- (() => {
- const grouped: Record<string, StudentRecord[]> = {};
- schools.forEach((sc) => { grouped[sc.id] = []; });
- applyFilters(schoolStudents).forEach((s) => {
- if (s.schoolId && grouped[s.schoolId]) grouped[s.schoolId].push(s);
- else if (!s.schoolId) {
- // fallback: match by name
- const match = schools.find(sc => sc.name === s.school);
- if (match) grouped[match.id]?.push(s);
- }
- });
- return schools
- .sort((a, b) => a.name.localeCompare(b.name))
- .map((sc) => {
- const list = grouped[sc.id] || [];
- const open = expandedSchools.has(sc.id);
- const pr = passRate(list);
- const ev = list.filter(s => s.testStatus !== "pending").length;
- if (statusFilter !== "all" && list.length === 0) return null;
- return (
- <div key={sc.id} className="bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 rounded-xl border border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 shadow-sm dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 overflow-hidden">
- <button
- onClick={() => setExpandedSchools((prev) => { const s = new Set(prev); s.has(sc.id) ? s.delete(sc.id) : s.add(sc.id); return s; })}
- className="w-full flex flex-wrap items-center justify-between gap-3 px-5 py-4 hover:bg-gray-50 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:bg-zinc-900 transition-colors"
- >
- <div className="flex items-center gap-3 min-w-0">
- <div className="w-9 h-9 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
- <Building2 className="w-5 h-5 text-blue-600" />
- </div>
- <div className="text-left min-w-0">
- <p className="font-semibold text-gray-800 dark:text-zinc-200 dark:text-zinc-200 dark:text-zinc-200 dark:text-zinc-200 truncate">{sc.name}</p>
- <p className="text-xs text-gray-400">
- {sc.branch && <span className="mr-2">{sc.branch}</span>}
- {list.length} students · {list.filter(s=>s.testStatus==="passed").length} passed · {list.filter(s=>s.testStatus==="failed").length} failed · {list.filter(s=>s.testStatus==="pending").length} pending
- </p>
- </div>
- </div>
- <div className="flex items-center gap-4 flex-shrink-0 ml-4">
- {ev > 0 && (
- <div className="hidden sm:block w-28">
- <MiniBar value={pr} color={pr >= 80 ? "bg-green-500" : pr >= 50 ? "bg-blue-500" : "bg-red-500"} />
- </div>
- )}
- <div className="flex gap-2 text-xs">
- <span className="px-2 py-0.5 bg-gray-100 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 rounded-full font-medium">{list.length} total</span>
- {ev > 0 && <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-medium">{pr}% pass</span>}
- </div>
- {open ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
- </div>
- </button>
- {open && (
- <div className="border-t border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800">
- {list.length === 0 ? (
- <p className="py-6 text-center text-sm text-gray-400">No students match the current filters</p>
- ) : (
- <>
- <div className="flex justify-end px-4 py-2 bg-gray-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 border-b border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800">
- <button
- onClick={() => exportToExcel(list, `School_${sc.name}`)}
- className="flex items-center gap-1 text-xs text-green-700 hover:text-green-800 font-medium"
- >
- <FileSpreadsheet className="w-3.5 h-3.5" /> Export
- </button>
- </div>
- <StudentTable list={list} />
- </>
- )}
- </div>
- )}
- </div>
- );
- });
- })()
- )}
- </div>
- )}
-
- {/* ════════════════════════════════════════════════════════════════════ */}
- {/* ── BY BATCH TAB ── */}
- {/* ════════════════════════════════════════════════════════════════════ */}
- {activeTab === "batches" && (
- <div className="space-y-3">
- {tests.length === 0 ? (
- <div className="bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 rounded-xl border border-dashed border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 p-12 text-center">
- <Layers className="w-12 h-12 text-gray-300 mx-auto mb-3" />
- <p className="text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 font-medium">No belt tests found</p>
- </div>
- ) : (
- tests.map((test) => {
- const testBatches = batches.filter((b) => b.beltTestId === test.id);
- if (testBatches.length === 0) return null;
- return (
- <div key={test.id} className="bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 rounded-xl border border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 shadow-sm dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 overflow-hidden">
- {/* Test header */}
- <div className="px-5 py-3 bg-gray-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 border-b border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 flex items-center gap-2">
- <Award className="w-4 h-4 text-blue-600" />
- <p className="font-bold text-gray-800 dark:text-zinc-200 dark:text-zinc-200 dark:text-zinc-200 dark:text-zinc-200 text-sm">{test.name}</p>
- <span className="text-xs text-gray-400">{test.date}</span>
- <span className={`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${test.isActive ? "bg-green-100 text-green-700" : "bg-gray-100 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400"}`}>
- {test.isActive ? "Active" : "Inactive"}
- </span>
- </div>
-
- {/* Batches inside test */}
- <div className="divide-y divide-gray-50">
- {testBatches
- .sort((a, b) => a.batchNumber - b.batchNumber)
- .map((batch) => {
- const batchStudentIds = batch.studentIds || [];
- const batchStuds = applyFilters(
- students.filter((s) => (batchStudentIds || []).includes(s.id))
- );
- const open = expandedBatches.has(batch.id);
- const pr = passRate(batchStuds);
- const isIndividual = batch.schoolId === "individual";
- const school = schools.find((sc) => sc.id === batch.schoolId);
-
- return (
- <div key={batch.id}>
- <button
- onClick={() => setExpandedBatches((prev) => { const s = new Set(prev); s.has(batch.id) ? s.delete(batch.id) : s.add(batch.id); return s; })}
- className="w-full flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:bg-zinc-900 transition-colors text-left"
- >
- <div className="flex items-center gap-3 min-w-0">
- <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${isIndividual ? "bg-indigo-100" : "bg-blue-100"}`}>
- {isIndividual ? <UserCircle className="w-4 h-4 text-indigo-600" /> : <Layers className="w-4 h-4 text-blue-600" />}
- </div>
- <div className="min-w-0">
- <div className="flex items-center gap-2 flex-wrap">
- <span className="font-semibold text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 text-sm">{formatBatchName(batch)}</span>
- {!isIndividual && (
- <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full truncate max-w-[120px]">{school?.name || "Unknown School"}</span>
- )}
- <span className={`text-xs px-1.5 py-0.5 rounded-full ${
- batch.status === "completed" ? "bg-green-100 text-green-700" :
- batch.status === "ongoing" ? "bg-blue-100 text-blue-700" :
- "bg-gray-100 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400"
- }`}>{batch.status}</span>
- </div>
- <p className="text-xs text-gray-400">
- {batchStuds.length} students · {batchStuds.filter(s=>s.testStatus==="passed").length} passed · {batchStuds.filter(s=>s.testStatus==="pending").length} pending
- </p>
- </div>
- </div>
- <div className="flex items-center gap-4 flex-shrink-0 ml-4">
- {batchStuds.filter(s=>s.testStatus!=="pending").length > 0 && (
- <div className="hidden sm:block w-24">
- <MiniBar value={pr} color={pr >= 80 ? "bg-green-500" : pr >= 50 ? "bg-blue-500" : "bg-red-500"} />
- </div>
- )}
- {open ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
- </div>
- </button>
- {open && (
- <div className="border-t border-gray-50 bg-gray-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900/50">
- {batchStuds.length === 0 ? (
- <p className="py-5 text-center text-sm text-gray-400">No students match the current filters</p>
- ) : (
- <>
- <div className="flex justify-end px-4 py-2 border-b border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800">
- <button
- onClick={() => exportToExcel(batchStuds, formatBatchName(batch).replace(/[^a-zA-Z0-9-_]/g, '_'))}
- className="flex items-center gap-1 text-xs text-green-700 hover:text-green-800 font-medium"
- >
- <FileSpreadsheet className="w-3.5 h-3.5" /> Export
- </button>
- </div>
- <StudentTable list={batchStuds} />
- </>
- )}
- </div>
- )}
- </div>
- );
- })}
- </div>
- </div>
- );
- })
- )}
- </div>
- )}
-
- {/* ════════════════════════════════════════════════════════════════════ */}
- {/* ── INDIVIDUAL TAB ── */}
- {/* ════════════════════════════════════════════════════════════════════ */}
- {activeTab === "individual" && (
- <div className="space-y-4">
- {/* Individual stats */}
- <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
- <StatCard label="Total Individual" value={individualStudents.length} color="indigo" />
- <StatCard label="Passed" value={individualStudents.filter(s=>s.testStatus==="passed").length} color="green" />
- <StatCard label="Failed" value={individualStudents.filter(s=>s.testStatus==="failed").length} color="red" />
- <StatCard label="Pending" value={individualStudents.filter(s=>s.testStatus==="pending").length} color="amber" />
- </div>
-
- {/* Individual Batches summary */}
- {individualBatches.length > 0 && (
- <div className="bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 rounded-xl border border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 shadow-sm dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 overflow-hidden">
- <div className="px-5 py-3 bg-indigo-50 border-b border-indigo-100 flex items-center gap-2">
- <UserCircle className="w-4 h-4 text-indigo-600" />
- <p className="font-bold text-indigo-800 text-sm">Individual Batches ({individualBatches.length})</p>
- </div>
- <div className="divide-y divide-gray-50">
- {individualBatches
- .sort((a, b) => a.batchNumber - b.batchNumber)
- .map((batch) => {
- const bstudents = applyFilters(
- students.filter((s) => (batch.studentIds || []).includes(s.id))
- );
- const open = expandedBatches.has(`indiv-${batch.id}`);
- const pr = passRate(bstudents);
- return (
- <div key={batch.id}>
- <button
- onClick={() => setExpandedBatches((prev) => { const s = new Set(prev); const k = `indiv-${batch.id}`; s.has(k) ? s.delete(k) : s.add(k); return s; })}
- className="w-full flex flex-wrap items-center justify-between gap-3 px-5 py-3 hover:bg-gray-50 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:bg-zinc-900 transition-colors"
- >
- <div className="flex items-center gap-2">
- <span className="font-semibold text-sm text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300">{formatBatchName(batch)}</span>
- <span className={`text-xs px-1.5 py-0.5 rounded-full ${batch.status === "completed" ? "bg-green-100 text-green-700" : "bg-gray-100 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400"}`}>{batch.status}</span>
- </div>
- <div className="flex items-center gap-3 flex-shrink-0">
- <span className="text-xs text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400">{bstudents.length} students</span>
- {bstudents.filter(s=>s.testStatus!=="pending").length > 0 && (
- <div className="hidden sm:block w-20">
- <MiniBar value={pr} color={pr >= 80 ? "bg-green-500" : "bg-blue-500"} />
- </div>
- )}
- {open ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
- </div>
- </button>
- {open && (
- <div className="border-t border-gray-50">
- {bstudents.length === 0 ? (
- <p className="py-5 text-center text-sm text-gray-400">No students match filters</p>
- ) : (
- <StudentTable list={bstudents} />
- )}
- </div>
- )}
- </div>
- );
- })}
- </div>
- </div>
- )}
-
- {/* All individual students flat table */}
- <div className="bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 rounded-xl border border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 shadow-sm dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 overflow-hidden">
- <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 bg-gray-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 border-b border-gray-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800">
- <p className="font-semibold text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 text-sm flex items-center gap-2">
- <Users className="w-4 h-4 text-indigo-500" />
- All Individual Students
- {groupBy !== "none" && <span className="text-xs text-gray-400 font-normal">grouped by {groupBy}</span>}
- </p>
- <button
- onClick={() => exportToExcel(applyFilters(individualStudents), "Individual_Results")}
- className="flex items-center gap-1 text-xs text-green-700 hover:text-green-800 font-medium"
- >
- <FileSpreadsheet className="w-3.5 h-3.5" /> Export
- </button>
- </div>
-
- {groupBy === "none" ? (
- <StudentTable list={applyFilters(individualStudents)} />
- ) : (
- (() => {
- const groups = groupStudents(applyFilters(individualStudents), groupBy, schools, batches, tests);
- return Object.entries(groups)
- .sort(([a], [b]) => a.localeCompare(b))
- .map(([key, list]) => {
- const gkey = `indiv-group-${key}`;
- const open = expandedGroups.has(gkey);
- return (
- <div key={key} className="border-b border-gray-50 last:border-0">
- <button
- onClick={() => toggleGroup(gkey)}
- className="w-full flex items-center gap-2 px-5 py-2.5 bg-indigo-50/60 hover:bg-indigo-50 transition-colors"
- >
- {open ? <ChevronDown className="w-3.5 h-3.5 text-indigo-400" /> : <ChevronRight className="w-3.5 h-3.5 text-indigo-400" />}
- <span className="font-semibold text-indigo-800 text-sm">{key}</span>
- <span className="ml-auto text-xs text-indigo-500">{list.length} students</span>
- </button>
- {open && <StudentTable list={list} />}
- </div>
- );
- });
- })()
- )}
- </div>
- </div>
- )}
-
-
 
  </div>
  </AdminLayout>
