@@ -1,6 +1,6 @@
 import { ReactNode, useState, useEffect, useTransition } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { LogOut, LayoutDashboard, Users, Menu, X, ChevronRight, UserCircle, School, ChevronDown, Check } from "lucide-react";
+import { LogOut, LayoutDashboard, UserPlus, Users, Menu, X, ChevronRight, UserCircle, School, ChevronDown, Check } from "lucide-react";
 import { firebaseAuthService } from "../../services/firebaseAuth";
 import { ThemeToggle } from "../ui/ThemeToggle";
 import { useCoachSchool } from "../../contexts/CoachSchoolContext";
@@ -33,7 +33,8 @@ export default function CoachLayout({ children }: CoachLayoutProps) {
   // having its own entry.
   const navItems = [
     { path: `/coach/dashboard`, icon: LayoutDashboard, label: "Dashboard", match: [`/coach/dashboard`] },
-    { path: `/coach/students`,  icon: Users,           label: "Students",  match: [`/coach/students`, `/coach/bulk-register`] },
+    { path: `/coach/students`,  icon: Users,           label: "Students",  match: [`/coach/students`] },
+    { path: `/coach/bulk-register`, icon: UserPlus, label: "Bulk Registration", match: [`/coach/bulk-register`] },
   ];
   const isItemActive = (item: { match: string[] }) =>
     item.match.some((m) => (location.pathname || '').includes(m));

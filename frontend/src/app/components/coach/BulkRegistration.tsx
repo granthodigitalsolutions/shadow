@@ -55,47 +55,6 @@ export default function BulkRegistration() {
     });
   }, []);
 
-  const checkDuplicate = (s: any, currentBatch: any[] = [], currentIndex: number = -1): { error: string | false, warning: string | false } => {
-    let error: string | false = false;
-    let warning: string | false = false;
-
-    // Error check: mobile + standard + program level match
-    const exactMatchDB = existingStudents.some(es => 
-      (String(es.whatsapp).trim() === String(s.whatsapp).trim()) &&
-      (String(es.standard).trim() === String(s.standard).trim()) &&
-      (s.programType === 'KARATE' ? String(es.beltLevel).trim() === String(s.beltLevel).trim() : String(es.stageLevel) === String(s.stageLevel))
-    );
-    if (exactMatchDB) {
-      error = "Database";
-    }
-
-    if (!error) {
-      const exactMatchBatchIndex = currentBatch.findIndex(es => 
-        (String(es.whatsapp).trim() === String(s.whatsapp).trim()) &&
-        (String(es.standard).trim() === String(s.standard).trim()) &&
-        (s.programType === 'KARATE' ? String(es.beltLevel).trim() === String(s.beltLevel).trim() : String(es.stageLevel) === String(s.stageLevel))
-      );
-      if (exactMatchBatchIndex !== -1) {
-        error = currentIndex !== -1 ? `Student #${currentIndex + 1}` : `Student`;
-      }
-    }
-
-    if (!error) {
-      // Warning check: only mobile number matches
-      const mobileMatchDB = existingStudents.some(es => String(es.whatsapp).trim() === String(s.whatsapp).trim());
-      if (mobileMatchDB) {
-        warning = "Same parent mobile exists in Database";
-      } else {
-        const mobileMatchBatchIndex = currentBatch.findIndex(es => String(es.whatsapp).trim() === String(s.whatsapp).trim());
-        if (mobileMatchBatchIndex !== -1) {
-          warning = `Same parent mobile as ${currentIndex !== -1 ? `Student #${currentIndex + 1}` : `Student`}`;
-        }
-      }
-    }
-
-    return { error, warning };
-  };
-
   const totalFee = students.reduce((sum, student) => sum + (student.fee || 0), 0);
 
   const handleRegisterStudents = async () => {
@@ -121,7 +80,7 @@ export default function BulkRegistration() {
         const studentsPayload: any[] = [];
 
         for (const s of students) {
-          const { tempId, fee, duplicateStatus, ...rest } = s;
+          const { tempId, fee, ...rest } = s;
 
           const testIdToUse = s.beltTestId || selectedBeltTestId;
           const studentTest = allBeltTests.find((t: any) => t.id === testIdToUse);
@@ -306,7 +265,6 @@ export default function BulkRegistration() {
                     for (let i = 0; i < generated.length; i++) {
                       mapped.push({
                         ...generated[i],
-                        duplicateStatus: checkDuplicate(generated[i], mapped, i)
                       });
                     }
                     setStudents(mapped);
@@ -321,7 +279,6 @@ export default function BulkRegistration() {
                       <Users className="w-5 h-5 text-zinc-400" />
                       Validation Results ({students.length} Total)
                     </h3>
-                    {isCheckingDuplicates && <span className="text-blue-500 text-sm font-bold animate-pulse">Checking database...</span>}
                   </div>
                   <div className="flex-1 overflow-auto custom-scrollbar">
                     {/* Desktop Table View */}
@@ -338,19 +295,9 @@ export default function BulkRegistration() {
                       </thead>
                       <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                         {students.map((s, idx) => (
-                          <tr key={idx} className={`${s.duplicateStatus?.error ? 'bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30' : s.duplicateStatus?.warning ? 'bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30' : 'hover:bg-zinc-50 dark:hover:bg-zinc-900/50'}`}>
+                          <tr key={idx} className={`hover:bg-zinc-50 dark:hover:bg-zinc-900/50`}>
                             <td className="p-3 font-medium text-zinc-900 dark:text-zinc-200 flex flex-col gap-1 items-start">
                               <span>{s.name}</span>
-                              {s.duplicateStatus?.error && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-600 text-[10px] font-bold uppercase tracking-wider">
-                                  <AlertTriangle className="w-3 h-3" /> {s.duplicateStatus.error === 'Database' ? 'Duplicate in Database' : `Duplicate: ${s.duplicateStatus.error}`}
-                                </span>
-                              )}
-                              {s.duplicateStatus?.warning && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-bold uppercase tracking-wider">
-                                  <AlertTriangle className="w-3 h-3" /> {s.duplicateStatus.warning}
-                                </span>
-                              )}
                             </td>
                             <td className="p-3 text-zinc-600 dark:text-zinc-400">{s.programType}</td>
                             <td className="p-3 text-zinc-600 dark:text-zinc-400 truncate max-w-[150px]">{s.school}</td>
@@ -365,7 +312,7 @@ export default function BulkRegistration() {
                     {/* Mobile Card View */}
                     <div className="grid grid-cols-1 gap-3 p-4 md:hidden">
                       {students.map((s, idx) => (
-                        <div key={idx} className={`p-4 rounded-xl border flex flex-col gap-2 ${s.duplicateStatus?.error ? 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-900/30' : s.duplicateStatus?.warning ? 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-900/30' : 'bg-white dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800'}`}>
+                        <div key={idx} className={`p-4 rounded-xl border flex flex-col gap-2 bg-white dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800`}>
                           <div className="flex justify-between items-start">
                             <div className="font-bold text-zinc-900 dark:text-white text-lg">
                               {s.name}
@@ -375,21 +322,6 @@ export default function BulkRegistration() {
                             </div>
                           </div>
                           
-                          {s.duplicateStatus?.error && (
-                            <div>
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-600 text-[10px] font-bold uppercase tracking-wider">
-                                <AlertTriangle className="w-3 h-3" /> {s.duplicateStatus.error === 'Database' ? 'Duplicate in Database' : `Duplicate: ${s.duplicateStatus.error}`}
-                              </span>
-                            </div>
-                          )}
-                          {s.duplicateStatus?.warning && (
-                            <div>
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-bold uppercase tracking-wider">
-                                <AlertTriangle className="w-3 h-3" /> {s.duplicateStatus.warning}
-                              </span>
-                            </div>
-                          )}
-
                           <div className="grid grid-cols-2 gap-2 text-sm mt-1">
                             <div>
                               <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-0.5">Program / Level</p>
@@ -501,7 +433,7 @@ export default function BulkRegistration() {
 
                 <button
                   onClick={handleRegisterStudents}
-                  disabled={students.length === 0 || isRegistering || students.some(s => s.duplicateStatus?.error) || !selectedBeltTestId}
+                  disabled={students.length === 0 || isRegistering || !selectedBeltTestId}
                   className="w-full py-4 bg-blue-500 hover:bg-blue-600 text-zinc-950 font-bold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {isRegistering ? (
@@ -516,12 +448,6 @@ export default function BulkRegistration() {
                   )}
                 </button>
                 
-                {students.some(s => s.duplicateStatus?.error) && (
-                  <p className="text-red-400 text-xs text-center mt-3 flex items-center justify-center gap-1 font-semibold bg-red-400/10 p-2 rounded-lg">
-                    <AlertTriangle className="w-4 h-4" /> Resolve duplicates before proceeding.
-                  </p>
-                )}
-
                 {!selectedBeltTestId && (
                   <p className="text-red-400 text-xs text-center mt-3 flex items-center justify-center gap-1">
                     <AlertTriangle className="w-3 h-3" /> No belt test selected.
