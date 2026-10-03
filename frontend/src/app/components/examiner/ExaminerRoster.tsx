@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Users, LogOut, ArrowRight, Loader2, AlertCircle, ClipboardList, Camera, CheckCircle2, X, QrCode, UserPlus } from "lucide-react";
+import { Users, LogOut, ArrowRight, Loader2, AlertCircle, ClipboardList, Camera, CheckCircle2, X, QrCode, UserPlus, Trash2 } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
-import { getExaminerStudents, scanExaminerStudent, allocateExaminerSlots, ExaminerBatch, ExaminerStudent, ExaminerCapacity } from "../../services/examinerApi";
+import { getExaminerStudents, scanExaminerStudent, allocateExaminerSlots, removeExaminerStudent, startExaminerExam, ExaminerBatch, ExaminerStudent, ExaminerCapacity } from "../../services/examinerApi";
 import { formatBatchName } from "../../utils/batchFormatters";
 import { ThemeToggle } from "../ui/ThemeToggle";
+import { playSuccessBeep, unlockScanBeep } from "../../utils/scanBeep";
 
 // Ignore an identical re-decode of a QR still sitting in frame — the scan
 // itself is already duplicate-safe server-side, this just avoids spamming
@@ -39,6 +40,10 @@ export default function ExaminerRoster() {
   const allocRequestRef = useRef<{ qty: number; id: string } | null>(null);
 
   const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  // Remove flow: inline confirmation, then one request at a time.
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   // ── Scan-to-assign state ──────────────────────────────────────────────────
   const [scanning, setScanning] = useState(false);
@@ -183,6 +188,9 @@ export default function ExaminerRoster() {
       setCapacityInfo((prev) =>
         prev ? { ...prev, mine: { ...prev.mine, assigned: prev.mine.assigned + 1, remaining: Math.max(0, prev.mine.remaining - 1), studentIds: [...prev.mine.studentIds, data.student!.id] } } : prev,
       );
+      // Only reached after the server confirmed the addition (errors and
+      // duplicates return success:false above), so exactly one beep per student.
+      playSuccessBeep();
       setScanFeedback({ type: "success", message: `${data.student.name || "Student"} added — Ready.` });
       setManualId("");
     } catch (e: any) {
@@ -263,6 +271,7 @@ export default function ExaminerRoster() {
 
   const handleManualAdd = () => {
     if (!manualId.trim()) return;
+    unlockScanBeep();
     handleAddStudent(manualId.trim());
   };
 
@@ -270,13 +279,61 @@ export default function ExaminerRoster() {
 
   // The examiner's own assigned students are the source of truth: scoring
   // runs over every one of them that is still pending - no second count prompt.
-  const handleStart = () => {
-    if (pendingStudents.length === 0) return;
+  const handleStart = async () => {
+    if (pendingStudents.length === 0 || starting) return;
     setStarting(true);
-    const queue = pendingStudents.map((s) => s.id);
-    localStorage.setItem("examinerSessionQueue", JSON.stringify(queue));
-    localStorage.setItem("examinerSessionIndex", "0");
-    navigate("/examiner/score");
+    setStartError(null);
+    try {
+      // Lock the session server-side first: from here removal is refused.
+      const { status, data } = await startExaminerExam();
+      if (status === 401) {
+        navigate("/examiner", { replace: true });
+        return;
+      }
+      if (!data.success) {
+        setStartError(data.message || "Could not start the examination. Please try again.");
+        setStarting(false);
+        return;
+      }
+      if (data.capacity) setCapacityInfo(data.capacity);
+      const queue = pendingStudents.map((s) => s.id);
+      localStorage.setItem("examinerSessionQueue", JSON.stringify(queue));
+      localStorage.setItem("examinerSessionIndex", "0");
+      navigate("/examiner/score");
+    } catch (e: any) {
+      setStartError(e?.message || "Could not reach the server. Check your connection and try again.");
+      setStarting(false);
+    }
+  };
+
+  const handleRemove = async (studentId: string) => {
+    if (removingId) return;
+    setRemovingId(studentId);
+    setScanFeedback(null);
+    try {
+      const { status, data } = await removeExaminerStudent(studentId);
+      if (status === 401) {
+        navigate("/examiner", { replace: true });
+        return;
+      }
+      if (!data.success || !data.capacity) {
+        setScanFeedback({ type: "error", message: data.message || "Could not remove this student. Please try again." });
+        fetchRoster(true);
+        return;
+      }
+      const removed = students.find((s) => s.id === studentId);
+      setStudents((prev) => prev.filter((s) => s.id !== studentId));
+      setBatch((prev) =>
+        prev ? { ...prev, totalStudents: Math.max(0, prev.totalStudents - 1), pendingCount: Math.max(0, prev.pendingCount - 1) } : prev,
+      );
+      setCapacityInfo(data.capacity);
+      setScanFeedback({ type: "success", message: `${removed?.name || "Student"} removed from your session.` });
+    } catch (e: any) {
+      setScanFeedback({ type: "error", message: e?.message || "Could not reach the server. Check your connection and try again." });
+    } finally {
+      setConfirmRemoveId(null);
+      setRemovingId(null);
+    }
   };
 
   if (loading) {
@@ -523,6 +580,7 @@ export default function ExaminerRoster() {
             <>
               <button
                 onClick={() => {
+                  unlockScanBeep(); // user gesture: lets mobile browsers play the beep later
                   setScanFeedback(null);
                   setScanning(true);
                 }}
@@ -572,14 +630,51 @@ export default function ExaminerRoster() {
                   disabled={starting}
                   className="w-full mb-3 px-6 py-4 bg-blue-500 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-lg active:scale-[0.98] transition-all flex items-center justify-center gap-2"
                 >
-                  Start Examination ({pendingStudents.length})
+                  {starting && <Loader2 className="w-5 h-5 animate-spin" />}
+                  {capacityInfo?.mine.started ? "Continue Examination" : "Start Examination"} ({pendingStudents.length})
                   <ArrowRight className="w-5 h-5" />
                 </button>
+              )}
+              {startError && (
+                <p className="mb-3 text-sm font-semibold text-red-600 dark:text-red-400">{startError}</p>
               )}
               <div className="space-y-2 max-h-64 overflow-y-auto">
                 {students.map((s) => {
                   const belt = s.beltLevel || (s.stageLevel != null ? `Stage ${s.stageLevel}` : "—");
                   const done = s.testStatus !== "pending";
+                  // Only before the exam starts, and only students not yet examined.
+                  const canRemove = !done && !capacityInfo?.mine.started;
+                  const confirming = confirmRemoveId === s.id;
+                  const removing = removingId === s.id;
+                  if (confirming) {
+                    return (
+                      <div
+                        key={s.id}
+                        className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-xl space-y-2.5"
+                      >
+                        <p className="text-sm font-semibold text-red-700 dark:text-red-300">
+                          Remove {s.name} from your examination session?
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setConfirmRemoveId(null)}
+                            disabled={removing}
+                            className="flex-1 px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-600 text-zinc-700 dark:text-zinc-200 rounded-lg text-sm font-bold disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => handleRemove(s.id)}
+                            disabled={removing}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-bold disabled:opacity-60"
+                          >
+                            {removing && <Loader2 className="w-4 h-4 animate-spin" />}
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
                   return (
                     <div
                       key={s.id}
@@ -589,6 +684,17 @@ export default function ExaminerRoster() {
                         <p className="font-bold text-sm text-zinc-900 dark:text-zinc-50 truncate">{s.name}</p>
                         <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">{belt}</p>
                       </div>
+                      {canRemove && (
+                        <button
+                          onClick={() => setConfirmRemoveId(s.id)}
+                          disabled={removingId !== null}
+                          aria-label={`Remove ${s.name}`}
+                          className="ml-auto flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-lg text-xs font-bold disabled:opacity-40 active:scale-95 transition-all"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Remove
+                        </button>
+                      )}
                       <span
                         className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
                           done

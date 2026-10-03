@@ -52,7 +52,7 @@ export interface ExaminerCapacity {
   /** Capacity still free for any examiner to reserve (server-computed). */
   available: number;
   /** This examiner's own reservation. */
-  mine: { quantity: number; assigned: number; remaining: number; studentIds: string[] };
+  mine: { quantity: number; assigned: number; remaining: number; studentIds: string[]; started?: boolean };
 }
 
 export interface VerifyCodeResponse {
@@ -202,6 +202,29 @@ export async function allocateExaminerSlots(
     method: "POST",
     body: JSON.stringify({ quantity, requestId }),
   });
+}
+
+export interface CapacityResponse {
+  success: boolean;
+  capacity?: ExaminerCapacity;
+  message?: string;
+}
+
+// Un-assign a mistakenly added student before the examination starts. The
+// backend re-checks ownership and the started state; the student's record is
+// kept and the slot returns to this examiner's remaining slots.
+export async function removeExaminerStudent(
+  studentId: string,
+): Promise<{ ok: boolean; status: number; data: CapacityResponse }> {
+  return examinerFetch<CapacityResponse>("/remove-student", {
+    method: "POST",
+    body: JSON.stringify({ studentId }),
+  });
+}
+
+// Marks this examiner's session as started (locks removal server-side).
+export async function startExaminerExam(): Promise<{ ok: boolean; status: number; data: CapacityResponse }> {
+  return examinerFetch<CapacityResponse>("/start-exam", { method: "POST" });
 }
 
 export interface ScanStudentResponse {

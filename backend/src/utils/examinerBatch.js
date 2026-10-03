@@ -109,7 +109,7 @@ const allocationsRef = (batchId) => db.collection('batches').doc(batchId).collec
 const toMyAllocation = (alloc) => {
   const studentIds = alloc && Array.isArray(alloc.studentIds) ? alloc.studentIds : [];
   const quantity = (alloc && alloc.quantity) || 0;
-  return { quantity, assigned: studentIds.length, remaining: Math.max(0, quantity - studentIds.length), studentIds };
+  return { quantity, assigned: studentIds.length, remaining: Math.max(0, quantity - studentIds.length), studentIds, started: !!(alloc && alloc.examStartedAt) };
 };
 
 const buildCapacityView = (batch, alloc) => ({ ...computeCapacity(batch), mine: toMyAllocation(alloc) });
