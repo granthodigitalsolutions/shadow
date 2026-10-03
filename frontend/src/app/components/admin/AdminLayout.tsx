@@ -59,7 +59,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
  const allNavItems = [
  { path: `/admin/${program}/dashboard`, icon: LayoutDashboard, label: "Dashboard" },
- { path: `/admin/${program}/live-monitor`, icon: Layers, label: "Batches" },
+ { path: `/admin/${program}/live-monitor`, icon: Layers, label: "Batch Monitoring" },
  { path: `/admin/${program}/schools`, icon: School, label: "Schools" },
  { path: `/admin/${program}/students`, icon: Users, label: "Students" },
  { path: `/admin/${program}/results`, icon: ClipboardList, label: "Results" },

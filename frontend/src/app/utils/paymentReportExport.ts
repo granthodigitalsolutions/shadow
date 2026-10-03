@@ -1,6 +1,6 @@
 import {
-  PaymentRow, ReportFilters, totalsOf, coachSummary, schoolSummary, transitionBreakdown,
-  formatINRPdf, safeCell, sanitizeFilename, statusLabel,
+  PaymentRow, ReportFilters, totalsOf, coachSummary, schoolSummary, transitionSummary, coachSections,
+  assertReportReconciles, pdfSafe, formatINRPdf, safeCell, sanitizeFilename, statusLabel,
 } from "./paymentReport";
 import { PDF_COLORS, drawBrandHeader } from "./pdfBranding";
 
@@ -13,6 +13,10 @@ export interface ExportContext {
   filters: ReportFilters;
   /** Human-readable filter lines, already resolved to names (not ids). */
   filterLines: string[];
+  /** Label/value pairs for the PDF "Applied Filters" table ("All" when not set). */
+  filterItems?: [string, string][];
+  /** Transition ids in configured order (Karate then Silambam) for the transition summary. */
+  transitionOrder?: string[];
   /** Used for file naming. */
   schoolName?: string;
   coachName?: string;
@@ -29,106 +33,229 @@ export function reportFilename(ctx: ExportContext, ext: "pdf" | "xlsx", now = ne
 }
 
 export async function exportPaymentPdf(ctx: ExportContext): Promise<string> {
+  // Refuse to produce a PDF whose sections disagree with each other.
+  assertReportReconciles(ctx.rows, ctx.transitionOrder);
+
   const [pdfMod, tableMod]: any[] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
   // Named export in the browser build; the Node build nests it under default.
   const jsPDF = pdfMod.jsPDF || pdfMod.default?.jsPDF || pdfMod.default;
   const autoTable = tableMod.default?.default || tableMod.default || tableMod.autoTable;
+
   const now = new Date();
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
   const margin = 12;
+  const bottom = 14; // room for the footer
   const t = totalsOf(ctx.rows);
+  const S = pdfSafe;
+  const money = (n: number) => formatINRPdf(n);
 
-  let y = drawBrandHeader(doc, { pageWidth: pageW, title: "PAYMENT REPORT", subtitle: timeStamp(now), height: 26, margin }) + 7;
+  let y = drawBrandHeader(doc, {
+    pageWidth: pageW,
+    title: "PAYMENT & STUDENT REGISTRATION REPORT",
+    subtitle: `Generated: ${timeStamp(now)}`,
+    height: 28,
+    margin,
+  }) + 8;
 
-  doc.setTextColor(...PDF_COLORS.primary);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(15);
-  doc.text("Payment & Student Registration Report", margin, y);
-  y += 6;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.setTextColor(...PDF_COLORS.gray);
-  doc.text(`Generated: ${timeStamp(now)}`, margin, y);
-  y += 5;
-  doc.text(`Filters: ${ctx.filterLines.length ? ctx.filterLines.join("  |  ") : "None (all records)"}`, margin, y, { maxWidth: pageW - margin * 2 });
-  y += 8;
+  // Starts a new page when fewer than `needed` mm remain, so a heading is never
+  // stranded at the bottom away from its table.
+  const ensureSpace = (needed: number) => {
+    if (y + needed > pageH - bottom) { doc.addPage(); y = 16; }
+  };
+  const heading = (text: string, sub?: string) => {
+    ensureSpace(36);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.setTextColor(...PDF_COLORS.primary);
+    doc.text(S(text), margin, y);
+    y += 2;
+    if (sub) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(...PDF_COLORS.gray);
+      doc.text(S(sub), margin, y + 4);
+      y += 8;
+    }
+    y += 3;
+  };
 
-  const head = { fillColor: PDF_COLORS.primary, textColor: PDF_COLORS.gold, fontStyle: "bold" as const };
-  const common = { margin: { left: margin, right: margin }, styles: { fontSize: 8, cellPadding: 1.8 }, headStyles: head, alternateRowStyles: { fillColor: PDF_COLORS.lightBg } };
-  const after = () => ((doc as any).lastAutoTable?.finalY ?? y) + 8;
+  const base = {
+    margin: { left: margin, right: margin, bottom },
+    styles: { fontSize: 8.5, cellPadding: 2.2, overflow: "linebreak" as const, valign: "middle" as const },
+    headStyles: { fillColor: PDF_COLORS.primary, textColor: PDF_COLORS.gold, fontStyle: "bold" as const },
+    alternateRowStyles: { fillColor: PDF_COLORS.lightBg },
+    rowPageBreak: "avoid" as const, // never split a row across pages
+    showHead: "everyPage" as const, // repeat column headers on every page
+  };
+  const after = (gap = 9) => { y = ((doc as any).lastAutoTable?.finalY ?? y) + gap; };
+  // Column indexes of the table being drawn that hold numbers (set by right()).
+  let rightCols: number[] = [];
+  const boldRow = (rowIndex: number) => (d: any) => {
+    // Header cells must follow their numeric column's alignment.
+    if (d.section === "head" && rightCols.includes(d.column.index)) d.cell.styles.halign = "right";
+    if (d.section === "body" && d.row.index === rowIndex) {
+      d.cell.styles.fontStyle = "bold";
+      d.cell.styles.fillColor = [229, 231, 235];
+    }
+  };
+  const right = (cols: number[]) => {
+    rightCols = cols;
+    const o: Record<number, any> = {};
+    cols.forEach((c) => { o[c] = { halign: "right" }; });
+    return o;
+  };
 
+  // 1. Applied filters ------------------------------------------------------------
+  const items = ctx.filterItems && ctx.filterItems.length
+    ? ctx.filterItems
+    : ([["School", "All"], ["Coach", "All"], ["Exam Type", "All"], ["Belt / Stage Transition", "All"], ["Payment Status", "All"], ["Registration Date", "All"]] as [string, string][]);
+  heading("Applied Filters");
   autoTable(doc, {
-    ...common, startY: y,
-    head: [["Registered Students", "Karate", "Silambam", "Total Amount", "Paid Amount", "Pending Amount", "Confirmed", "Pending", "Rejected"]],
-    body: [[t.students, t.karate, t.silambam, formatINRPdf(t.totalAmount), formatINRPdf(t.paidAmount), formatINRPdf(t.pendingAmount), t.confirmedCount, t.pendingCount, t.rejectedCount]],
+    ...base, startY: y,
+    head: [items.map(([k]) => S(k))],
+    body: [items.map(([, v]) => S(v))],
   });
-  y = after();
+  after();
+
+  // 2. Overall summary --------------------------------------------------------------
+  heading("Overall Registration & Payment Summary");
+  autoTable(doc, {
+    ...base, startY: y,
+    head: [["Registered Students", "Karate", "Silambam", "Total Fees", "Total Paid", "Total Pending", "Confirmed", "Pending", "Rejected"]],
+    body: [[t.students, t.karate, t.silambam, money(t.totalAmount), money(t.paidAmount), money(t.pendingAmount), t.confirmedCount, t.pendingCount, t.rejectedCount]],
+    columnStyles: right([0, 1, 2, 3, 4, 5, 6, 7, 8]),
+    didParseCell: boldRow(-1),
+  });
+  after(4);
   if (t.missingFee > 0) {
-    doc.setFontSize(8);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
     doc.setTextColor(...PDF_COLORS.red);
-    doc.text(`${t.missingFee} registration(s) have no stored fee and contribute Rs. 0 to the totals.`, margin, y - 4);
+    doc.text(`${t.missingFee} registration(s) have no stored fee: they are counted as students and add Rs. 0 to every amount.`, margin, y + 3);
+    y += 8;
+  } else {
+    y += 4;
   }
 
-  const breakdown = transitionBreakdown(ctx.rows);
-  if (breakdown.length > 0) {
-    autoTable(doc, {
-      ...common, startY: y,
-      head: [["Belt / Stage Transition", "Students", "Total Fees", "Paid", "Pending"]],
-      body: breakdown.map((b) => [b.label, b.count, formatINRPdf(b.fee), formatINRPdf(b.paid), formatINRPdf(b.pending)]),
-    });
-    y = after();
-  }
-
-  const coaches = coachSummary(ctx.rows);
+  // 3. Belt / stage transition summary ------------------------------------------------
+  const trans = transitionSummary(ctx.rows, ctx.transitionOrder);
+  heading("Belt / Stage Transition Summary");
   autoTable(doc, {
-    ...common, startY: y,
-    head: [["Coach", "School", "Students", "Total Fees", "Paid", "Pending"]],
+    ...base, startY: y,
+    head: [["Exam Type", "Belt / Stage Transition", "Students", "Total Fees", "Paid", "Pending", "Confirmed", "Pending", "Rejected"]],
     body: [
-      ...coaches.map((c) => [c.coach, c.school, c.students, formatINRPdf(c.totalAmount), formatINRPdf(c.paidAmount), formatINRPdf(c.pendingAmount)]),
-      ["TOTAL", "", t.students, formatINRPdf(t.totalAmount), formatINRPdf(t.paidAmount), formatINRPdf(t.pendingAmount)],
-    ],
-    didParseCell: (d) => { if (d.row.index === coaches.length) d.cell.styles.fontStyle = "bold"; },
-  });
-  y = after();
-
-  const schools = schoolSummary(ctx.rows);
-  if (schools.length > 1 || ctx.filters.school === "all") {
-    autoTable(doc, {
-      ...common, startY: y,
-      head: [["School", "Coaches", "Students", "Total Fees", "Paid", "Pending"]],
-      body: [
-        ...schools.map((s) => [s.school, s.coaches, s.students, formatINRPdf(s.totalAmount), formatINRPdf(s.paidAmount), formatINRPdf(s.pendingAmount)]),
-        ["TOTAL", "", t.students, formatINRPdf(t.totalAmount), formatINRPdf(t.paidAmount), formatINRPdf(t.pendingAmount)],
-      ],
-      didParseCell: (d) => { if (d.row.index === schools.length) d.cell.styles.fontStyle = "bold"; },
-    });
-    y = after();
-  }
-
-  autoTable(doc, {
-    ...common, startY: y,
-    head: [["Student", "ID", "School", "Coach", "Exam", "Current", "Transition", "Fee", "Paid", "Balance", "Status", "Paid On", "Reference"]],
-    body: [
-      ...ctx.rows.map((r) => [
-        r.name, r.id, r.school, r.coach, r.program === "KARATE" ? "Karate" : "Silambam", r.currentLevel, r.transitionLabel,
-        r.fee === null ? "N/A" : formatINRPdf(r.fee), formatINRPdf(r.paid), formatINRPdf(r.balance),
-        statusLabel(r.status), r.paymentDate ? r.paymentDate.slice(0, 10) : "-", r.reference || "-",
+      ...trans.map((r) => [
+        r.program === "KARATE" ? "Karate" : "Silambam",
+        S(r.label) + (r.source === "unmapped" ? " (unmapped)" : ""),
+        r.students, money(r.totalAmount), money(r.paidAmount), money(r.pendingAmount), r.confirmedCount, r.pendingCount, r.rejectedCount,
       ]),
-      ["TOTAL", "", "", "", "", "", "", formatINRPdf(t.totalAmount), formatINRPdf(t.paidAmount), formatINRPdf(t.pendingAmount), "", "", ""],
+      ["TOTAL", "", t.students, money(t.totalAmount), money(t.paidAmount), money(t.pendingAmount), t.confirmedCount, t.pendingCount, t.rejectedCount],
     ],
-    styles: { fontSize: 7, cellPadding: 1.4 },
-    didParseCell: (d) => { if (d.row.index === ctx.rows.length) d.cell.styles.fontStyle = "bold"; },
+    columnStyles: right([2, 3, 4, 5, 6, 7, 8]),
+    didParseCell: boldRow(trans.length),
+  });
+  after();
+
+  // 4. Coach-wise summary --------------------------------------------------------------
+  const coaches = coachSummary(ctx.rows);
+  heading("Coach-Wise Registration & Payment Summary");
+  autoTable(doc, {
+    ...base, startY: y,
+    head: [["Coach", "School", "Students", "Total Fees", "Paid", "Pending", "Confirmed", "Pending", "Rejected"]],
+    body: [
+      ...coaches.map((c) => [S(c.coachId ? c.coach : "Unassigned Coach"), S(c.school), c.students, money(c.totalAmount), money(c.paidAmount), money(c.pendingAmount), c.confirmedCount, c.pendingCount, c.rejectedCount]),
+      ["TOTAL", "", t.students, money(t.totalAmount), money(t.paidAmount), money(t.pendingAmount), t.confirmedCount, t.pendingCount, t.rejectedCount],
+    ],
+    columnStyles: right([2, 3, 4, 5, 6, 7, 8]),
+    didParseCell: boldRow(coaches.length),
+  });
+  after();
+
+  // School summary - only useful when the report spans several schools.
+  const schools = schoolSummary(ctx.rows);
+  if (schools.length > 1) {
+    heading("School-Wise Summary");
+    autoTable(doc, {
+      ...base, startY: y,
+      head: [["School", "Coaches", "Students", "Total Fees", "Paid", "Pending", "Confirmed", "Pending", "Rejected"]],
+      body: [
+        ...schools.map((s) => [S(s.school), s.coaches, s.students, money(s.totalAmount), money(s.paidAmount), money(s.pendingAmount), s.confirmedCount, s.pendingCount, s.rejectedCount]),
+        ["TOTAL", "", t.students, money(t.totalAmount), money(t.paidAmount), money(t.pendingAmount), t.confirmedCount, t.pendingCount, t.rejectedCount],
+      ],
+      columnStyles: right([1, 2, 3, 4, 5, 6, 7, 8]),
+      didParseCell: boldRow(schools.length),
+    });
+    after();
+  }
+
+  // 5. Student details, one section per coach ---------------------------------------------
+  const sections = coachSections(ctx.rows);
+  heading("Student Details by Coach", `${sections.length} coach section${sections.length === 1 ? "" : "s"} - each student appears once, under the coach on their registration.`);
+  sections.forEach((sec, i) => {
+    // Keep the coach heading with at least the table header and first rows.
+    ensureSpace(46);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(...PDF_COLORS.primary);
+    doc.text(S(`Coach ${i + 1} - ${sec.coach}`), margin, y);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(...PDF_COLORS.gray);
+    doc.text(S(`School: ${sec.schools.join(", ")}`), margin, y + 5);
+    y += 8;
+
+    const multiSchool = sec.schools.length > 1;
+    const head = ["Student", "Registration ID", "Exam", "Current Belt", "Belt / Stage Transition", ...(multiSchool ? ["School"] : []), "Fee", "Paid", "Balance", "Status"];
+    const n = head.length;
+    const moneyCols = [n - 4, n - 3, n - 2];
+    const body: any[][] = sec.rows.map((r) => [
+      S(r.name), S(r.id), r.program === "KARATE" ? "Karate" : "Silambam", S(r.currentLevel), S(r.transitionLabel),
+      ...(multiSchool ? [S(r.school)] : []),
+      r.fee === null ? "N/A" : money(r.fee), money(r.paid), money(r.balance), statusLabel(r.status),
+    ]);
+    const st = sec.totals;
+    body.push([
+      { content: `Subtotal - ${st.students} student${st.students === 1 ? "" : "s"}   (Confirmed ${st.confirmedCount} | Pending ${st.pendingCount} | Rejected ${st.rejectedCount})`, colSpan: n - 4 },
+      money(st.totalAmount), money(st.paidAmount), money(st.pendingAmount), "",
+    ]);
+    autoTable(doc, {
+      ...base, startY: y,
+      head: [head],
+      body,
+      styles: { ...base.styles, fontSize: 8, cellPadding: 1.9 },
+      // Fixed widths (sum 269-273mm of the 273mm text area) keep columns aligned
+      // across coach sections and stop transition names wrapping needlessly.
+      columnStyles: {
+        ...right(moneyCols),
+        ...Object.fromEntries(
+          (multiSchool ? [32, 30, 19, 18, 42, 42, 21, 21, 21, 25] : [38, 36, 21, 25, 52, 25, 25, 25, 26]).map((w, i) => [i, { ...(moneyCols.includes(i) ? { halign: "right" } : {}), cellWidth: w }]),
+        ),
+      },
+      didParseCell: boldRow(body.length - 1),
+    });
+    after(11);
+  });
+
+  // 6. Grand totals ------------------------------------------------------------------------
+  heading("Grand Totals");
+  autoTable(doc, {
+    ...base, startY: y,
+    head: [["Registered Students", "Karate", "Silambam", "Total Fees", "Total Paid", "Total Pending", "Confirmed", "Pending", "Rejected"]],
+    body: [[t.students, t.karate, t.silambam, money(t.totalAmount), money(t.paidAmount), money(t.pendingAmount), t.confirmedCount, t.pendingCount, t.rejectedCount]],
+    columnStyles: right([0, 1, 2, 3, 4, 5, 6, 7, 8]),
+    didParseCell: boldRow(0),
   });
 
   const pages = doc.getNumberOfPages();
-  const pageH = doc.internal.pageSize.getHeight();
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i);
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(...PDF_COLORS.gray);
+    doc.text("Team Shadow KAI - Payment & Student Registration Report", margin, pageH - 6);
     doc.text(`Page ${i} of ${pages}`, pageW - margin, pageH - 6, { align: "right" });
-    doc.text("Team Shadow Kai - Payment & Student Registration Report", margin, pageH - 6);
   }
 
   const name = reportFilename(ctx, "pdf", now);

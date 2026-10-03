@@ -11,7 +11,7 @@ import {
 import { Batch, BeltTest, School, StudentRecord } from "../../../types/admin";
 import { useProgram } from "../../../contexts/ProgramContext";
 import { formatBatchName } from "../../../utils/batchFormatters";
-import { buildKarateTransitions, buildSilambamTransitions } from "../../../utils/examTransitions";
+import { buildKarateTransitions, buildSilambamTransitions, transitionFilterOptions } from "../../../utils/examTransitions";
 import {
   BatchRow, BatchFilters, DEFAULT_BATCH_FILTERS, deriveBatchRow, totalsOfBatches, filterBatchRows, ExamState,
 } from "../../../utils/batchMonitoring";
@@ -19,7 +19,7 @@ import { getGrade } from "../../../constants/scoring";
 import { useToast } from "../../../hooks/useToast";
 import AdminLayout from "../AdminLayout";
 
-const PAGE_SIZES = [10, 25, 50];
+const PAGE_SIZES = [6, 12, 24];
 type SortKey = "created" | "examDate" | "status";
 const STATE_ORDER: Record<ExamState, number> = { in_progress: 0, pending: 1, completed: 2 };
 
@@ -47,7 +47,7 @@ export default function BatchMonitoringDashboard() {
   const [filters, setFilters] = useState<BatchFilters>(DEFAULT_BATCH_FILTERS);
   const [sortKey, setSortKey] = useState<SortKey>("created");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(6);
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<BatchRow | null>(null);
 
@@ -104,15 +104,11 @@ export default function BatchMonitoringDashboard() {
     return [...m.entries()].map(([key, name]) => ({ key, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [allRows]);
 
-  const beltOptions = useMemo(() => {
-    const m = new Map<string, string>();
-    allRows.forEach((r) => {
-      if (filters.program === "all" || r.program === filters.program) {
-        m.set(r.beltKey, `${r.program === "KARATE" ? "Karate" : "Silambam"}: ${r.beltLabel}`);
-      }
-    });
-    return [...m.entries()].map(([key, label]) => ({ key, label })).sort((a, b) => a.label.localeCompare(b.label));
-  }, [allRows, filters.program]);
+  // Every configured transition ("from → to"), not just those that already have batches.
+  const beltOptions = useMemo(
+    () => transitionFilterOptions(filters.program, buildKarateTransitions(karateFees), buildSilambamTransitions(silambamFees)),
+    [filters.program, karateFees, silambamFees],
+  );
 
   // Summary cards and table share this one filtered dataset.
   const filtered = useMemo(() => filterBatchRows(allRows, filters), [allRows, filters]);
@@ -135,20 +131,7 @@ export default function BatchMonitoringDashboard() {
   const selectedLive = selected ? allRows.find((r) => r.id === selected.id) || null : null;
 
   const setFilter = <K extends keyof BatchFilters>(k: K, v: BatchFilters[K]) => setFilters((f) => ({ ...f, [k]: v }));
-  const toggleSort = (k: SortKey) => {
-    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(k); setSortDir(k === "status" ? "asc" : "desc"); }
-  };
-
   const selectCls = "w-full px-3 py-2 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg text-sm text-zinc-900 dark:text-white cursor-pointer";
-
-  const SortTh = ({ k, children }: { k: SortKey; children: React.ReactNode }) => (
-    <th className="px-3 py-3 font-semibold">
-      <button onClick={() => toggleSort(k)} className="inline-flex items-center gap-1 hover:text-zinc-800 dark:hover:text-zinc-200">
-        {children}<ArrowUpDown className={`w-3 h-3 ${sortKey === k ? "text-blue-500" : "opacity-40"}`} />
-      </button>
-    </th>
-  );
 
   if (loading && batches.length === 0 && !loadError) {
     return (
@@ -169,7 +152,7 @@ export default function BatchMonitoringDashboard() {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white dark:bg-zinc-950 p-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50" style={{ fontFamily: "'Bebas Neue', sans-serif" }}>
-              BATCHES — LIVE MONITORING
+              BATCH MONITORING
             </h1>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 font-medium">
               Live slots, assignments and exam progress for every batch. Updates automatically.
@@ -192,18 +175,14 @@ export default function BatchMonitoringDashboard() {
           <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-2">
             {isFiltered ? "Counts reflect the filters below." : "Counts cover all batches."}
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <KpiCard title="Total Batches" value={totals.batches} icon={<Layers />} tone="text-zinc-800 dark:text-zinc-100" />
-            <KpiCard title="Total Slots" value={totals.totalSlots} icon={<Hash />} tone="text-zinc-800 dark:text-zinc-100" note="configured capacity" />
+            <KpiCard title="Total Slot Capacity" value={totals.totalSlots} icon={<Hash />} tone="text-zinc-800 dark:text-zinc-100" note="configured capacity" />
             <KpiCard title="Assigned Students" value={totals.assignedStudents} icon={<Users />} tone="text-blue-600" note="unique students in batches" />
-            <KpiCard
-              title="Available Slots" value={totals.availablePool} icon={<AlertCircle />} tone="text-orange-600"
-              note={`pool not yet reserved · ${totals.unfilledAllocated} reserved, unfilled`}
-            />
+            <KpiCard title="Available Pool Slots" value={totals.availablePool} icon={<AlertCircle />} tone="text-emerald-600" note={`not yet reserved · ${totals.unfilledAllocated} reserved but unfilled`} />
             <KpiCard title="Pending Batches" value={totals.pending} icon={<Clock />} tone="text-yellow-600" note="exam not started" />
             <KpiCard title="In Progress" value={totals.inProgress} icon={<PlayCircle />} tone="text-indigo-600" />
-            <KpiCard title="Completed" value={totals.completed} icon={<CheckCircle />} tone="text-green-600" />
-            <KpiCard title="Referee Assigned" value={totals.refereeAssigned} icon={<Users />} tone="text-blue-600" note="overlaps the status cards" />
+            <KpiCard title="Completed Batches" value={totals.completed} icon={<CheckCircle />} tone="text-green-600" />
           </div>
         </div>
 
@@ -234,8 +213,8 @@ export default function BatchMonitoringDashboard() {
               <option value="KARATE">Karate</option>
               <option value="SELAMBAM">Silambam</option>
             </select>
-            <select aria-label="Belt, stage or transition" value={filters.belt} onChange={(e) => setFilter("belt", e.target.value)} className={selectCls}>
-              <option value="all">All Belts / Stages</option>
+            <select aria-label="Belt or stage transition" value={filters.belt} onChange={(e) => setFilter("belt", e.target.value)} className={selectCls}>
+              <option value="all">All Belt / Stage Transitions</option>
               {beltOptions.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
             </select>
             <select aria-label="Batch status" value={filters.status} onChange={(e) => setFilter("status", e.target.value as any)} className={selectCls}>
@@ -247,94 +226,109 @@ export default function BatchMonitoringDashboard() {
             </select>
             <input aria-label="Examination date" type="date" value={filters.examDate} onChange={(e) => setFilter("examDate", e.target.value)} className={selectCls} />
           </div>
+          <div className="flex items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+            <ArrowUpDown className="w-3.5 h-3.5" /> Sort by
+            <select aria-label="Sort by" value={`${sortKey}:${sortDir}`} onChange={(e) => { const [k, d] = e.target.value.split(":"); setSortKey(k as SortKey); setSortDir(d as "asc" | "desc"); }} className="px-2 py-1.5 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg text-zinc-900 dark:text-white">
+              <option value="created:desc">Newest created</option>
+              <option value="created:asc">Oldest created</option>
+              <option value="examDate:desc">Exam date (latest)</option>
+              <option value="examDate:asc">Exam date (earliest)</option>
+              <option value="status:asc">Status (in progress first)</option>
+            </select>
+          </div>
         </div>
 
-        {/* Table */}
-        <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
-          {sorted.length === 0 ? (
-            <div className="p-12 text-center text-zinc-500">
-              {allRows.length === 0 ? "No batches have been created yet." : "No batches match the current filters."}
-            </div>
-          ) : (
-            <>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm whitespace-nowrap">
-                  <thead className="bg-zinc-50 dark:bg-zinc-900/80 text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
-                    <tr>
-                      <th className="px-3 py-3 font-semibold">Batch</th>
-                      <th className="px-3 py-3 font-semibold">School</th>
-                      <th className="px-3 py-3 font-semibold">Exam / Belt</th>
-                      <th className="px-3 py-3 font-semibold text-right">Capacity</th>
-                      <th className="px-3 py-3 font-semibold text-right">Allocated</th>
-                      <th className="px-3 py-3 font-semibold text-right">Assigned</th>
-                      <th className="px-3 py-3 font-semibold text-right">Remaining</th>
-                      <th className="px-3 py-3 font-semibold text-center">Progress</th>
-                      <SortTh k="status">Status</SortTh>
-                      <SortTh k="created">Created</SortTh>
-                      <SortTh k="examDate">Exam Date</SortTh>
-                      <th className="px-3 py-3"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/50 text-zinc-800 dark:text-zinc-200">
-                    {visible.map((r) => (
-                      <tr key={r.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors">
-                        <td className="px-3 py-3">
-                          <div className="font-bold text-zinc-900 dark:text-white">{r.name}</div>
-                          <div className="text-[11px] text-zinc-500 font-mono">{r.id}</div>
-                        </td>
-                        <td className="px-3 py-3">{r.schoolName}</td>
-                        <td className="px-3 py-3">
-                          <div className="font-medium">{r.program === "KARATE" ? "Karate" : "Silambam"}</div>
-                          <div className="text-xs text-zinc-500">{r.beltLabel}</div>
-                        </td>
-                        <td className="px-3 py-3 text-right font-semibold">{r.capacity}</td>
-                        <td className="px-3 py-3 text-right">{r.allocated}</td>
-                        <td className="px-3 py-3 text-right">{r.assigned}</td>
-                        <td className="px-3 py-3 text-right">
-                          <div className="font-semibold">{r.availablePool}</div>
-                          <div className="text-[11px] text-zinc-500">{r.unfilledAllocated} reserved, unfilled</div>
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <span className="text-xs font-bold">{r.scored} / {r.assigned} scored</span>
-                          <div className="w-20 h-1.5 mx-auto bg-zinc-200 dark:bg-zinc-800 rounded-full mt-1 overflow-hidden">
-                            <div className={`h-full rounded-full ${r.progressPct === 100 ? "bg-green-500" : "bg-blue-500"}`} style={{ width: `${r.progressPct}%` }} />
-                          </div>
-                        </td>
-                        <td className="px-3 py-3"><StateBadge state={r.examState} /></td>
-                        <td className="px-3 py-3 text-zinc-600 dark:text-zinc-400">{fmtDate(r.createdAt)}</td>
-                        <td className="px-3 py-3 text-zinc-600 dark:text-zinc-400">{r.examDate ? fmtDate(r.examDate) : "—"}</td>
-                        <td className="px-3 py-3 text-right">
-                          <div className="inline-flex gap-1">
-                            <button onClick={() => setSelected(r)} className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg" title="View details" aria-label={`View ${r.name}`}>
-                              <Eye className="w-4 h-4" />
-                            </button>
-                            <Link
-                              to={`/admin/${r.program === "SELAMBAM" ? "selambam" : "karate"}/${r.batch.schoolId === "individual" ? "individual-batches" : `schools/${r.batch.schoolId}/batches`}`}
-                              className="p-1.5 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg" title="Manage batch" aria-label={`Manage ${r.name}`}
-                            >
-                              <ExternalLink className="w-4 h-4" />
-                            </Link>
-                          </div>
-                        </td>
-                      </tr>
+        {/* Batch cards */}
+        {sorted.length === 0 ? (
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm p-12 text-center text-zinc-500">
+            {allRows.length === 0 ? "No batches have been created yet." : "No batches match the current filters."}
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-5">
+              {visible.map((r) => (
+                <article key={r.id} className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm p-6 flex flex-col gap-5">
+                  <header className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                        {r.program === "KARATE" ? "Karate Belt Examination" : "Silambam Stage Examination"}
+                      </p>
+                      <h3 className="text-xl font-bold text-zinc-900 dark:text-white mt-1 break-words">{r.name}</h3>
+                      <p className="text-[11px] text-zinc-500 font-mono mt-0.5 break-all">{r.id}</p>
+                    </div>
+                    <StateBadge state={r.examState} />
+                  </header>
+
+                  <div>
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">School</p>
+                    <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{r.schoolName}</p>
+                  </div>
+
+                  <div className="rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{r.program === "KARATE" ? "Belt transition" : "Stage transition"}</p>
+                    <p className="text-2xl font-bold text-zinc-900 dark:text-white mt-0.5">{r.beltLabel}</p>
+                  </div>
+
+                  <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {[
+                      ["Total Capacity", r.capacity, "text-zinc-900 dark:text-white"],
+                      ["Allocated Slots", r.allocated, "text-zinc-900 dark:text-white"],
+                      ["Students Assigned", r.assigned, "text-blue-600 dark:text-blue-400"],
+                      ["Unfilled Allocated", r.unfilledAllocated, "text-amber-600 dark:text-amber-400"],
+                      ["Available Pool", r.availablePool, "text-emerald-600 dark:text-emerald-400"],
+                    ].map(([label, value, tone]) => (
+                      <div key={label as string} className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-3 py-3">
+                        <dt className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{label}</dt>
+                        <dd className={`text-3xl font-bold mt-0.5 ${tone}`}>{value}</dd>
+                      </div>
                     ))}
-                  </tbody>
-                </table>
+                    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-3 py-3">
+                      <dt className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Exam Date</dt>
+                      <dd className="text-base font-bold mt-1.5 text-zinc-900 dark:text-white">{r.examDate ? fmtDate(r.examDate) : "Not set"}</dd>
+                    </div>
+                  </dl>
+
+                  <div>
+                    <div className="flex items-center justify-between text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
+                      <span>Examination progress</span>
+                      <span>{r.scored} / {r.assigned} scored</span>
+                    </div>
+                    <div className="w-full h-2.5 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${r.progressPct === 100 ? "bg-green-500" : "bg-blue-500"}`} style={{ width: `${r.progressPct}%` }} />
+                    </div>
+                  </div>
+
+                  <footer className="flex items-center justify-between gap-3 pt-1">
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400">Created {fmtDate(r.createdAt)}</span>
+                    <div className="flex gap-2">
+                      <Link
+                        to={`/admin/${r.program === "SELAMBAM" ? "selambam" : "karate"}/${r.batch.schoolId === "individual" ? "individual-batches" : `schools/${r.batch.schoolId}/batches`}`}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-bold text-zinc-700 dark:text-zinc-200 bg-zinc-100 dark:bg-zinc-800 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                      >
+                        <ExternalLink className="w-4 h-4" /> Manage
+                      </Link>
+                      <button onClick={() => setSelected(r)} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg">
+                        <Eye className="w-4 h-4" /> View Details
+                      </button>
+                    </div>
+                  </footer>
+                </article>
+              ))}
+            </div>
+
+            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+              <span>{page * pageSize + 1}–{Math.min(sorted.length, (page + 1) * pageSize)} of {sorted.length}</span>
+              <div className="flex items-center gap-2">
+                <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} aria-label="Cards per page" className="px-2 py-1.5 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg">
+                  {PAGE_SIZES.map((n) => <option key={n} value={n}>{n} / page</option>)}
+                </select>
+                <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg disabled:opacity-40">Prev</button>
+                <span>Page {page + 1} / {pageCount}</span>
+                <button onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))} disabled={page >= pageCount - 1} className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg disabled:opacity-40">Next</button>
               </div>
-              <div className="p-4 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
-                <span>{page * pageSize + 1}–{Math.min(sorted.length, (page + 1) * pageSize)} of {sorted.length}</span>
-                <div className="flex items-center gap-2">
-                  <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} aria-label="Rows per page" className="px-2 py-1.5 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg">
-                    {PAGE_SIZES.map((n) => <option key={n} value={n}>{n} / page</option>)}
-                  </select>
-                  <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg disabled:opacity-40">Prev</button>
-                  <span>Page {page + 1} / {pageCount}</span>
-                  <button onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))} disabled={page >= pageCount - 1} className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg disabled:opacity-40">Next</button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
+            </div>
+          </>
+        )}
 
         {selectedLive && (
           <BatchDetailModal row={selectedLive} students={students} onClose={() => setSelected(null)} />
@@ -348,12 +342,12 @@ export default function BatchMonitoringDashboard() {
 
 function KpiCard({ title, value, icon, tone, note }: { title: string; value: number | string; icon: React.ReactElement; tone: string; note?: string }) {
   return (
-    <div className="p-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col justify-between">
+    <div className="p-5 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col justify-between min-h-[120px]">
       <div className="flex justify-between items-start mb-2">
         <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">{title}</span>
         <div className={`${tone} opacity-80`}>{React.cloneElement(icon as React.ReactElement<any>, { className: "w-5 h-5" })}</div>
       </div>
-      <div className={`text-2xl font-bold ${tone}`}>{value}</div>
+      <div className={`text-4xl font-bold ${tone}`}>{value}</div>
       {note && <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">{note}</div>}
     </div>
   );

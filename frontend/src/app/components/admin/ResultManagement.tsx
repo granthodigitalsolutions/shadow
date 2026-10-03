@@ -14,6 +14,8 @@ import {
 } from "../../services/firebaseData";
 import { useToast } from "../../hooks/useToast";
 import { useProgram } from "../../contexts/ProgramContext";
+import { useExamTransitions } from "../../hooks/useExamTransitions";
+import { resolveStudentTransition, transitionFilterOptions } from "../../utils/examTransitions";
 import { StudentRecord, School as SchoolType, Batch, BeltTest } from "../../types/admin";
 import * as XLSX from "xlsx";
 import { formatBatchName } from "../../utils/batchFormatters";
@@ -114,6 +116,7 @@ function SortButton({ field, current, dir, onClick }: { field: SortField; curren
 export default function ResultManagement() {
  const { showToast } = useToast();
  const { currentProgram } = useProgram();
+ const { karate: karateT, silambam: silambamT } = useExamTransitions();
  const lastFetchedProgram = useRef<string | null>(null);
 
  // data
@@ -227,14 +230,11 @@ export default function ResultManagement() {
  () => Array.from(new Set(students.map((s) => s.gender).filter(Boolean))).sort() as string[],
  [students],
  );
- const beltOptions = useMemo(() => {
- const set = new Set<string>();
- students.forEach((s) => {
- const belt = s.beltLevel || (s.stageLevel != null ? `Stage ${s.stageLevel}` : "");
- if (belt) set.add(belt);
- });
- return Array.from(set).sort();
- }, [students]);
+ // Complete from → to transitions from the Admin fee configuration (never bare belt names).
+ const beltOptions = useMemo(
+ () => transitionFilterOptions(currentProgram === "SELAMBAM" ? "SELAMBAM" : currentProgram === "KARATE" ? "KARATE" : "all", karateT, silambamT),
+ [currentProgram, karateT, silambamT],
+ );
 
  // ── ONE filtered dataset — feeds the table, the stats, and both exports ──────
 
@@ -246,7 +246,7 @@ export default function ResultManagement() {
  if (eventFilter !== ALL) res = res.filter((s) => s.registrationType === eventFilter);
  if (genderFilter !== ALL) res = res.filter((s) => s.gender === genderFilter);
  if (beltFilter !== ALL) {
- res = res.filter((s) => (s.beltLevel || (s.stageLevel != null ? `Stage ${s.stageLevel}` : "")) === beltFilter);
+ res = res.filter((s) => resolveStudentTransition(s, karateT, silambamT).key === beltFilter);
  }
  if (statusFilter !== ALL) {
  if (statusFilter === "passed") res = res.filter((s) => s.testStatus === "passed" || s.testStatus === "pass");
@@ -266,7 +266,7 @@ export default function ResultManagement() {
 
  return sortStudents(res, sortField, sortDir);
  // eslint-disable-next-line react-hooks/exhaustive-deps
- }, [students, schools, schoolNameToId, schoolFilter, batchFilter, eventFilter, genderFilter, beltFilter, statusFilter, search, sortField, sortDir]);
+ }, [students, schools, schoolNameToId, schoolFilter, batchFilter, eventFilter, genderFilter, beltFilter, karateT, silambamT, statusFilter, search, sortField, sortDir]);
 
  const toggleSort = (field: SortField) => {
  if (sortField === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -346,7 +346,7 @@ export default function ResultManagement() {
  if (batchFilter !== ALL) { const b = batchById.get(batchFilter); items.push({ label: "Batch", value: b ? formatBatchName(b) : batchFilter }); }
  if (eventFilter !== ALL) items.push({ label: "Event", value: eventFilter === "school" ? "School" : "Individual" });
  if (genderFilter !== ALL) items.push({ label: "Gender", value: genderFilter });
- if (beltFilter !== ALL) items.push({ label: "Belt/Stage", value: beltFilter });
+ if (beltFilter !== ALL) items.push({ label: "Belt/Stage Transition", value: beltOptions.find((o) => o.key === beltFilter)?.label || beltFilter });
  if (statusFilter !== ALL) items.push({ label: "Status", value: statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1) });
  if (search.trim()) items.push({ label: "Search", value: search.trim() });
  return items;
@@ -732,14 +732,14 @@ export default function ResultManagement() {
  </div>
 
  <div>
- <label className="block text-xs font-semibold text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wide mb-1.5">Belt / Stage</label>
+ <label className="block text-xs font-semibold text-gray-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wide mb-1.5">Belt / Stage Transition</label>
  <select
  value={beltFilter}
  onChange={(e) => setBeltFilter(e.target.value)}
  className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-sm text-gray-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
  >
- <option value={ALL}>All Belts / Stages</option>
- {beltOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+ <option value={ALL}>All Belt Transitions</option>
+ {beltOptions.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
  </select>
  </div>
 

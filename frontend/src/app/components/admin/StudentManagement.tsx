@@ -8,6 +8,8 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useToast } from "../../hooks/useToast";
 import { useProgram } from "../../contexts/ProgramContext";
+import { useExamTransitions } from "../../hooks/useExamTransitions";
+import { resolveStudentTransition, transitionFilterOptions } from "../../utils/examTransitions";
 
 const getBeltHoverClass = (belt: string | undefined | null) => {
   if (!belt) return 'hover:bg-indigo-600 hover:text-white';
@@ -30,6 +32,7 @@ export default function StudentManagement() {
  const location = useLocation();
  const { showToast } = useToast();
  const { currentProgram } = useProgram();
+ const { karate: karateT, silambam: silambamT } = useExamTransitions();
 
   // Unified Registration Type Tab (replaces IndividualStudents)
  const [activeTab, setActiveTab] = useState<"all" | "school" | "individual">(
@@ -95,7 +98,7 @@ export default function StudentManagement() {
  (s.id || "").toLowerCase().includes(q)
  )) return false;
 
- if (beltFilter !== "all" && s.beltLevel !== beltFilter) return false;
+ if (beltFilter !== "all" && resolveStudentTransition(s, karateT, silambamT).key !== beltFilter) return false;
  if (genderFilter !== "all" && s.gender !== genderFilter) return false;
  if (paymentStatusFilter !== "all" && s.paymentStatus !== paymentStatusFilter) return false;
  if (testStatusFilter !== "all" && s.testStatus !== testStatusFilter) return false;
@@ -113,11 +116,9 @@ export default function StudentManagement() {
  return true;
  });
 
-  const uniqueBeltLevels = currentProgram === 'SELAMBAM'
-    ? Array.from({ length: 8 }, (_, i) => `Stage ${i + 1}`)
-    : currentProgram === 'KARATE'
-      ? ['White', 'Yellow', 'Orange', 'Blue', 'Green', 'II Brown', 'I Brown', 'Black Belt']
-      : ['White', 'Yellow', 'Orange', 'Blue', 'Green', 'II Brown', 'I Brown', 'Black Belt', ...Array.from({ length: 8 }, (_, i) => `Stage ${i + 1}`)];
+  // Complete from → to transitions from the Admin fee configuration (never bare belt names).
+  const transitionOptions = transitionFilterOptions(
+    currentProgram === 'SELAMBAM' ? 'SELAMBAM' : currentProgram === 'KARATE' ? 'KARATE' : 'all', karateT, silambamT);
  const uniqueSchools = Array.from(new Set(students.map(s => s.school).filter(Boolean))).sort();
 
  const activeFiltersCount = [
@@ -320,8 +321,8 @@ export default function StudentManagement() {
  {uniqueSchools.map(s => <option key={s} value={s}>{s}</option>)}
  </select>
  <select value={beltFilter} onChange={(e) => setBeltFilter(e.target.value)} className="px-4 py-3 bg-zinc-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-xl focus:border-blue-500 outline-none text-sm font-medium text-zinc-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 bg-white dark:bg-zinc-950 dark:bg-zinc-900 text-gray-900 dark:text-zinc-50 dark:text-zinc-50 bg-transparent dark:bg-zinc-900 dark:text-zinc-50">
- <option value="all">All Belts</option>
- {uniqueBeltLevels.map(b => <option key={b} value={b}>{b}</option>)}
+ <option value="all">All Belt Transitions</option>
+ {transitionOptions.map(b => <option key={b.key} value={b.key}>{b.label}</option>)}
  </select>
  <select value={genderFilter} onChange={(e) => setGenderFilter(e.target.value)} className="px-4 py-3 bg-zinc-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-xl focus:border-blue-500 outline-none text-sm font-medium text-zinc-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 bg-white dark:bg-zinc-950 dark:bg-zinc-900 text-gray-900 dark:text-zinc-50 dark:text-zinc-50 bg-transparent dark:bg-zinc-900 dark:text-zinc-50">
  <option value="all">All Genders</option>

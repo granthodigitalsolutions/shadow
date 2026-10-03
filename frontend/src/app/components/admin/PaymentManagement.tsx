@@ -4,17 +4,17 @@ import {
   CheckSquare, Square, RefreshCw, Users, FileText, FileSpreadsheet, AlertCircle, X, ArrowUpDown,
 } from "lucide-react";
 import AdminLayout from "./AdminLayout";
-import {
-  firebaseStudentService, firebaseCoachService, firebaseFeeStructureService, firebaseSilambanFeeService,
-} from "../../services/firebaseData";
-import { auth } from "../../config/firebase";
+import { firebaseStudentService, firebaseCoachService } from "../../services/firebaseData";
+import { reviewAdminPayments, ReviewAction, ReviewOutcome } from "../../services/adminPaymentsApi";
+import PaymentGroupModal from "./PaymentGroupModal";
 import { useToast } from "../../hooks/useToast";
 import { useDialog } from "../../contexts/DialogContext";
 import { useProgram } from "../../contexts/ProgramContext";
-import { buildKarateTransitions, buildSilambamTransitions } from "../../utils/examTransitions";
+import { useExamTransitions } from "../../hooks/useExamTransitions";
+import { transitionFilterOptions } from "../../utils/examTransitions";
 import {
   PaymentRow, ReportFilters, DEFAULT_FILTERS, NO_COACH, PayStatus,
-  buildRows, filterRows, totalsOf, coachSummary, schoolSummary, transitionBreakdown,
+  buildRows, filterRows, totalsOf, coachSummary, schoolSummary, transitionBreakdown, buildGroups,
   formatINR, statusLabel,
 } from "../../utils/paymentReport";
 import type { StudentRecord } from "../../types/admin";
@@ -70,8 +70,12 @@ export default function PaymentManagement() {
 
   const [students, setStudents] = useState<StudentRecord[]>([]);
   const [coachNames, setCoachNames] = useState<Record<string, string>>({});
-  const [karateFees, setKarateFees] = useState<any[]>([]);
-  const [silambamFees, setSilambamFees] = useState<any[]>([]);
+  const { karate: karateTransitions, silambam: silambamTransitions } = useExamTransitions();
+  type Tab = "all" | "recent" | "pending" | "verified" | "rejected";
+  const [tab, setTab] = useState<Tab>("all");
+  const [recentDays, setRecentDays] = useState<"7" | "14" | "30" | "all">("14");
+  const [groupPage, setGroupPage] = useState(0);
+  const [openGroupKey, setOpenGroupKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -124,14 +128,8 @@ export default function PaymentManagement() {
         setCoachNames(Object.fromEntries(coaches.map((c: any) => [c.uid || c.id, c.fullName || c.email || "Coach"]))),
       )
       .catch((err) => console.error("Failed to load coaches:", err));
-    // Belt/stage options come from the Admin fee configuration - never hardcoded.
-    Promise.all([firebaseFeeStructureService.getAll(), firebaseSilambanFeeService.getAll()])
-      .then(([k, s]) => { setKarateFees(k); setSilambamFees(s); })
-      .catch((err) => console.error("Failed to load fee structure:", err));
   }, []);
 
-  const karateTransitions = useMemo(() => buildKarateTransitions(karateFees), [karateFees]);
-  const silambamTransitions = useMemo(() => buildSilambamTransitions(silambamFees), [silambamFees]);
   const allRows = useMemo(
     () => buildRows(students, coachNames, karateTransitions, silambamTransitions),
     [students, coachNames, karateTransitions, silambamTransitions],
@@ -152,19 +150,35 @@ export default function PaymentManagement() {
     return [...m.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [allRows, filters.school]);
 
-  const transitionOptions = useMemo(() => {
-    const out: { key: string; label: string }[] = [];
-    if (filters.program !== "SELAMBAM") karateTransitions.forEach((t) => out.push({ key: t.id, label: `Karate: ${t.label}` }));
-    if (filters.program !== "KARATE") silambamTransitions.forEach((t) => out.push({ key: t.id, label: `Silambam: ${t.label}` }));
-    return out;
-  }, [karateTransitions, silambamTransitions, filters.program]);
+  // Complete "from -> to" transitions from the Admin fee configuration.
+  const transitionOptions = useMemo(
+    () => transitionFilterOptions(filters.program, karateTransitions, silambamTransitions),
+    [karateTransitions, silambamTransitions, filters.program],
+  );
 
   // One filtered dataset drives the cards, tables, breakdowns and exports.
   const filtered = useMemo(() => filterRows(allRows, filters), [allRows, filters]);
-  const totals = useMemo(() => totalsOf(filtered), [filtered]);
-  const coachRows = useMemo(() => coachSummary(filtered), [filtered]);
-  const schoolRows = useMemo(() => schoolSummary(filtered), [filtered]);
-  const breakdown = useMemo(() => transitionBreakdown(filtered), [filtered]);
+
+  // "Recent" shows coach registration groups registered within the chosen window;
+  // every figure on the page (cards, summaries, exports) then follows that same set.
+  const recentGroups = useMemo(() => {
+    const groups = buildGroups(filtered);
+    if (recentDays === "all") return groups;
+    const cutoff = Date.now() - Number(recentDays) * 86400000;
+    return groups.filter((g) => Date.parse(g.registeredAt) >= cutoff);
+  }, [filtered, recentDays]);
+  const scopedRows = useMemo(
+    () => (tab === "recent" ? recentGroups.flatMap((g) => g.rows) : filtered),
+    [tab, recentGroups, filtered],
+  );
+  const totals = useMemo(() => totalsOf(scopedRows), [scopedRows]);
+  const coachRows = useMemo(() => coachSummary(scopedRows), [scopedRows]);
+  const schoolRows = useMemo(() => schoolSummary(scopedRows), [scopedRows]);
+  const breakdown = useMemo(() => transitionBreakdown(scopedRows), [scopedRows]);
+  const GROUP_PAGE = 8;
+  const groupPageCount = Math.max(1, Math.ceil(recentGroups.length / GROUP_PAGE));
+  const visibleGroups = recentGroups.slice(groupPage * GROUP_PAGE, (groupPage + 1) * GROUP_PAGE);
+  const openGroup = openGroupKey ? recentGroups.find((g) => g.key === openGroupKey) || null : null;
   const statusCounts = useMemo(() => {
     const base = filterRows(allRows, { ...filters, status: "all" });
     return {
@@ -175,19 +189,19 @@ export default function PaymentManagement() {
     };
   }, [allRows, filters]);
 
-  const isFiltered = JSON.stringify(filters) !== JSON.stringify(DEFAULT_FILTERS);
+  const isFiltered = JSON.stringify(filters) !== JSON.stringify(DEFAULT_FILTERS) || tab === "recent";
 
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
     const val = (r: PaymentRow): string | number =>
       sortKey === "name" ? r.name.toLowerCase() : sortKey === "fee" ? r.fee ?? -1 : sortKey === "status" ? r.status : r.paymentDate;
-    return [...filtered].sort((a, b) => (val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0) * dir);
-  }, [filtered, sortKey, sortDir]);
+    return [...scopedRows].sort((a, b) => (val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0) * dir);
+  }, [scopedRows, sortKey, sortDir]);
 
   const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
   const visible = sorted.slice(page * pageSize, page * pageSize + pageSize);
 
-  useEffect(() => { setPage(0); setSelectedIds(new Set()); }, [filters, pageSize]);
+  useEffect(() => { setPage(0); setSelectedIds(new Set()); setGroupPage(0); }, [filters, pageSize, tab, recentDays]);
   useEffect(() => { if (page > pageCount - 1) setPage(pageCount - 1); }, [page, pageCount]);
 
   const toggleSort = (key: SortKey) => {
@@ -195,59 +209,39 @@ export default function PaymentManagement() {
     else { setSortKey(key); setSortDir(key === "name" ? "asc" : "desc"); }
   };
 
-  const pendingInView = useMemo(() => filtered.filter((r) => r.status === "pending"), [filtered]);
+  const pendingInView = useMemo(() => scopedRows.filter((r) => r.status === "pending"), [scopedRows]);
   const allPendingSelected = pendingInView.length > 0 && pendingInView.every((r) => selectedIds.has(r.id));
   const toggleSelect = (id: string) =>
     setSelectedIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleSelectAll = () => setSelectedIds(allPendingSelected ? new Set() : new Set(pendingInView.map((r) => r.id)));
 
-  // Same write the coach-detail screen (AdminSchoolDetail) performs to confirm
-  // a student - paymentStatus flips to "verified" and who/when is stamped.
-  // The row updates optimistically and rolls back if the write fails.
+  // Backend review: verifies the caller is an admin, re-checks each student's
+  // payment state in a transaction, writes an audit entry and reports every
+  // student's outcome. The live listener then refreshes all totals from the
+  // saved records - nothing is updated optimistically on screen.
+  const reviewViaBackend = async (action: ReviewAction, ids: string[], requestId: string, reason?: string): Promise<ReviewOutcome> => {
+    setBusyIds((prev) => new Set([...prev, ...ids]));
+    try {
+      const outcome = await reviewAdminPayments(action, ids, requestId, reason);
+      const verb = action === "confirm" ? "confirmed" : "rejected";
+      if (outcome.counts.updated > 0) showToast(`${outcome.counts.updated} payment${outcome.counts.updated > 1 ? "s" : ""} ${verb}`, "success");
+      if (outcome.counts.failed > 0) showToast(`${outcome.counts.failed} payment${outcome.counts.failed > 1 ? "s" : ""} could not be updated`, "error");
+      return outcome;
+    } finally {
+      setBusyIds((prev) => { const n = new Set(prev); ids.forEach((id) => n.delete(id)); return n; });
+      setSelectedIds((prev) => { const n = new Set(prev); ids.forEach((id) => n.delete(id)); return n; });
+    }
+  };
+
   const approvePayments = async (ids: string[]): Promise<boolean> => {
-    const adminUid = auth.currentUser?.uid;
-    if (!adminUid) {
-      showToast("You must be signed in as an admin to approve payments", "error");
+    if (ids.length === 0) return true;
+    try {
+      const outcome = await reviewViaBackend("confirm", ids, crypto.randomUUID());
+      return outcome.counts.failed === 0;
+    } catch (e: any) {
+      showToast(e?.message || "Could not approve the payment", "error");
       return false;
     }
-    if (ids.length === 0) return true;
-
-    const idSet = new Set(ids);
-    const previous = new Map(students.filter((s) => idSet.has(s.id)).map((s) => [s.id, s.paymentStatus]));
-
-    setBusyIds((prev) => new Set([...prev, ...ids]));
-    setStudents((prev) => prev.map((s) => (idSet.has(s.id) ? { ...s, paymentStatus: "verified" } : s)));
-
-    const confirmedAt = new Date();
-    const results = await Promise.allSettled(
-      ids.map((id) =>
-        firebaseStudentService.update(id, { paymentStatus: "verified", confirmedBy: adminUid, confirmedAt } as any),
-      ),
-    );
-
-    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
-    if (failedIds.length > 0) {
-      results.forEach((r, i) => r.status === "rejected" && console.error(`Failed to approve ${ids[i]}:`, r.reason));
-      const failedSet = new Set(failedIds);
-      setStudents((prev) =>
-        prev.map((s) => (failedSet.has(s.id) ? { ...s, paymentStatus: previous.get(s.id) ?? "pending" } : s)),
-      );
-    }
-
-    setBusyIds((prev) => { const n = new Set(prev); ids.forEach((id) => n.delete(id)); return n; });
-    setSelectedIds((prev) => { const n = new Set(prev); ids.forEach((id) => n.delete(id)); return n; });
-
-    const okCount = ids.length - failedIds.length;
-    if (okCount > 0) {
-      showToast(
-        ids.length === 1
-          ? `Payment approved for ${students.find((s) => s.id === ids[0])?.name || "student"}`
-          : `${okCount} payment${okCount > 1 ? "s" : ""} approved`,
-        "success",
-      );
-    }
-    if (failedIds.length > 0) showToast(`Failed to approve ${failedIds.length} payment${failedIds.length > 1 ? "s" : ""}`, "error");
-    return failedIds.length === 0;
   };
 
   const handleBulkApprove = async () => {
@@ -275,9 +269,21 @@ export default function PaymentManagement() {
       filters.program !== "all" && `Exam: ${filters.program === "KARATE" ? "Karate" : "Silambam"}`,
       trans && `Belt/Stage: ${trans}`,
       filters.status !== "all" && `Payment status: ${statusLabel(filters.status)}`,
+      tab === "recent" && `Recent registration groups: ${recentDays === "all" ? "all" : `last ${recentDays} days`}`,
+      (filters.dateFrom || filters.dateTo) && `Registered: ${filters.dateFrom || "…"} to ${filters.dateTo || "…"}`,
       filters.search.trim() && `Search: "${filters.search.trim()}"`,
     ].filter(Boolean) as string[];
-    return { rows: sorted, filters, filterLines: lines, schoolName: school, coachName: coach };
+    const dateRange = filters.dateFrom || filters.dateTo ? `${filters.dateFrom || "any"} to ${filters.dateTo || "any"}` : "All";
+    const filterItems: [string, string][] = [
+      ["School", school || "All"],
+      ["Coach", coach || "All"],
+      ["Exam Type", filters.program === "all" ? "Karate & Silambam" : filters.program === "KARATE" ? "Karate" : "Silambam"],
+      ["Belt / Stage Transition", trans || "All"],
+      ["Payment Status", filters.status === "all" ? "All" : statusLabel(filters.status)],
+      ["Registration Date", dateRange],
+    ];
+    const transitionOrder = [...karateTransitions, ...silambamTransitions].map((t) => t.id);
+    return { rows: sorted, filters, filterLines: lines, filterItems, transitionOrder, schoolName: school, coachName: coach };
   };
 
   const runExport = async (kind: "pdf" | "xlsx") => {
@@ -382,20 +388,21 @@ export default function PaymentManagement() {
             <div className="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-1 overflow-x-auto max-w-full">
               {([
                 { key: "all", label: "All", count: statusCounts.all },
+                { key: "recent", label: "Recent", count: recentGroups.length, unit: "groups" },
                 { key: "pending", label: "Pending", count: statusCounts.pending },
-                { key: "verified", label: "Confirmed", count: statusCounts.verified },
+                { key: "verified", label: "Confirmed / Paid", count: statusCounts.verified },
                 { key: "rejected", label: "Rejected", count: statusCounts.rejected },
-              ] as const).map((tab) => (
+              ] as const).map((t) => (
                 <button
-                  key={tab.key}
-                  onClick={() => setFilter("status", tab.key)}
+                  key={t.key}
+                  onClick={() => { setTab(t.key); setFilter("status", t.key === "all" || t.key === "recent" ? "all" : t.key); }}
                   className={`shrink-0 px-3.5 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
-                    filters.status === tab.key
+                    tab === t.key
                       ? "bg-white dark:bg-zinc-950 text-zinc-900 dark:text-white shadow-sm"
                       : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200"
                   }`}
                 >
-                  {tab.label} ({tab.count})
+                  {t.label} ({t.count})
                 </button>
               ))}
             </div>
@@ -413,7 +420,7 @@ export default function PaymentManagement() {
 
             {isFiltered && (
               <button
-                onClick={() => setFilters(DEFAULT_FILTERS)}
+                onClick={() => { setFilters(DEFAULT_FILTERS); setTab("all"); }}
                 className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-zinc-600 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700"
               >
                 <X className="w-3.5 h-3.5" /> Clear Filters
@@ -437,9 +444,25 @@ export default function PaymentManagement() {
               <option value="SELAMBAM">Silambam</option>
             </select>
             <select value={filters.transition} onChange={(e) => setFilter("transition", e.target.value)} className={selectCls} aria-label="Belt or stage transition">
-              <option value="all">All Belts / Stages</option>
+              <option value="all">All Belt / Stage Transitions</option>
               {transitionOptions.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
             </select>
+            <label className="flex items-center gap-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+              Registered from
+              <input type="date" value={filters.dateFrom} max={filters.dateTo || undefined} onChange={(e) => setFilter("dateFrom", e.target.value)} className={selectCls} />
+            </label>
+            <label className="flex items-center gap-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+              to
+              <input type="date" value={filters.dateTo} min={filters.dateFrom || undefined} onChange={(e) => setFilter("dateTo", e.target.value)} className={selectCls} />
+            </label>
+            {tab === "recent" && (
+              <select value={recentDays} onChange={(e) => setRecentDays(e.target.value as any)} className={selectCls} aria-label="Recent window">
+                <option value="7">Registered in the last 7 days</option>
+                <option value="14">Registered in the last 14 days</option>
+                <option value="30">Registered in the last 30 days</option>
+                <option value="all">All registration groups</option>
+              </select>
+            )}
           </div>
         </div>
 
@@ -491,7 +514,7 @@ export default function PaymentManagement() {
               <div className="overflow-x-auto max-h-80">
                 <table className="w-full text-sm text-left">
                   <thead className="bg-zinc-50 dark:bg-zinc-900/50 text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400 sticky top-0">
-                    <tr><th className="p-3">Coach</th><th className="p-3">School</th><th className="p-3 text-right">Students</th><th className="p-3 text-right">Fees</th><th className="p-3 text-right">Paid</th><th className="p-3 text-right">Pending</th></tr>
+                    <tr><th className="p-3">Coach</th><th className="p-3">School</th><th className="p-3 text-right">Students</th><th className="p-3 text-right">Fees</th><th className="p-3 text-right">Paid</th><th className="p-3 text-right">Pending</th><th className="p-3"></th></tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800 text-zinc-800 dark:text-zinc-200">
                     {coachRows.map((c) => (
@@ -502,6 +525,16 @@ export default function PaymentManagement() {
                         <td className="p-3 text-right whitespace-nowrap">{formatINR(c.totalAmount)}</td>
                         <td className="p-3 text-right whitespace-nowrap">{formatINR(c.paidAmount)}</td>
                         <td className="p-3 text-right whitespace-nowrap">{formatINR(c.pendingAmount)}</td>
+                        <td className="p-3 text-right">
+                          {c.coachId && (
+                            <button
+                              onClick={() => { setFilters((f) => ({ ...f, school: c.schoolKey, coach: c.coachId, status: "all" })); setTab("recent"); setRecentDays("all"); }}
+                              className="px-2.5 py-1 text-xs font-bold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-lg whitespace-nowrap"
+                            >
+                              Registration groups
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                     <tr className="font-bold bg-zinc-50 dark:bg-zinc-900/50">
@@ -510,6 +543,7 @@ export default function PaymentManagement() {
                       <td className="p-3 text-right whitespace-nowrap">{formatINR(totals.totalAmount)}</td>
                       <td className="p-3 text-right whitespace-nowrap">{formatINR(totals.paidAmount)}</td>
                       <td className="p-3 text-right whitespace-nowrap">{formatINR(totals.pendingAmount)}</td>
+                      <td className="p-3"></td>
                     </tr>
                   </tbody>
                 </table>
@@ -556,7 +590,73 @@ export default function PaymentManagement() {
           </div>
         )}
 
+        {/* Recent: one card per coach registration group */}
+        {tab === "recent" && (
+          <div className="space-y-4">
+            {loading ? (
+              <div className="py-16 flex justify-center"><RefreshCw className="w-8 h-8 animate-spin text-blue-500" /></div>
+            ) : recentGroups.length === 0 ? (
+              <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-12 text-center text-zinc-400">
+                No coach registration groups match the current filters{recentDays !== "all" ? ` in the last ${recentDays} days` : ""}.
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {visibleGroups.map((g) => (
+                    <article key={g.key} className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-sm p-5 flex flex-col gap-4">
+                      <header>
+                        <h3 className="text-lg font-bold text-zinc-900 dark:text-white">{g.coach} — {g.school}</h3>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                          Registered {formatDate(g.registeredAt)}
+                          {g.groupId ? ` · Group ${g.groupId.slice(0, 8)}` : " · grouped by registration time (older record)"}
+                        </p>
+                      </header>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                        {[
+                          ["Students", g.students, "text-zinc-900 dark:text-white"],
+                          ["Pending", g.pendingCount, "text-blue-600 dark:text-blue-400"],
+                          ["Confirmed", g.confirmedCount, "text-emerald-600 dark:text-emerald-400"],
+                          ["Rejected", g.rejectedCount, "text-red-600 dark:text-red-400"],
+                        ].map(([label, v, tone]) => (
+                          <div key={label as string} className="rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 py-2.5">
+                            <p className={`text-2xl font-bold ${tone}`}>{v}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{label}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <dl className="grid grid-cols-3 gap-2 text-sm">
+                        <div><dt className="text-[11px] uppercase tracking-wider text-zinc-500">Total fees</dt><dd className="font-bold text-zinc-900 dark:text-white">{formatINR(g.totalAmount)}</dd></div>
+                        <div><dt className="text-[11px] uppercase tracking-wider text-zinc-500">Paid</dt><dd className="font-bold text-emerald-600 dark:text-emerald-400">{formatINR(g.paidAmount)}</dd></div>
+                        <div><dt className="text-[11px] uppercase tracking-wider text-zinc-500">Pending</dt><dd className="font-bold text-blue-600 dark:text-blue-400">{formatINR(g.pendingAmount)}</dd></div>
+                      </dl>
+                      <button
+                        onClick={() => setOpenGroupKey(g.key)}
+                        className="self-start inline-flex items-center gap-2 px-4 py-2.5 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl"
+                      >
+                        <Users className="w-4 h-4" /> View Students{g.eligibleIds.length ? ` (${g.eligibleIds.length} to confirm)` : ""}
+                      </button>
+                    </article>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between gap-3 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+                  <span>{recentGroups.length} group{recentGroups.length === 1 ? "" : "s"}</span>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setGroupPage((p) => Math.max(0, p - 1))} disabled={groupPage === 0} className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg disabled:opacity-40">Prev</button>
+                    <span>Page {groupPage + 1} / {groupPageCount}</span>
+                    <button onClick={() => setGroupPage((p) => Math.min(groupPageCount - 1, p + 1))} disabled={groupPage >= groupPageCount - 1} className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg disabled:opacity-40">Next</button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {openGroup && (
+          <PaymentGroupModal group={openGroup} onReview={reviewViaBackend} onClose={() => setOpenGroupKey(null)} />
+        )}
+
         {/* Payment details */}
+        {tab !== "recent" && (
         <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-sm overflow-hidden">
           {pendingInView.length > 0 && (
             <div className="p-4 sm:p-5 border-b border-zinc-200 dark:border-zinc-800 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
@@ -685,6 +785,7 @@ export default function PaymentManagement() {
             </>
           )}
         </div>
+        )}
       </div>
     </AdminLayout>
   );

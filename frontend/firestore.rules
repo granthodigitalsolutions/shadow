@@ -245,6 +245,13 @@ service cloud.firestore {
       }
     }
 
+    // Payment review audit trail - written only by the backend (Admin SDK bypasses rules);
+    // admins may read it, nobody can alter it from a client.
+    match /paymentAudit/{auditId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // Public Reads for Registration Flow
     match /schools/{schoolId} {
       allow read: if isPublicVisible();

@@ -1,5 +1,5 @@
 import type { StudentRecord } from "../types/admin";
-import type { ExamTransition } from "./examTransitions";
+import { ExamTransition, resolveStudentTransition, programOf } from "./examTransitions";
 
 // Pure payment-report logic for the Admin Payments page. One function builds
 // one row per student registration from the existing student documents (no
@@ -24,6 +24,12 @@ export interface PaymentRow {
   /** Config transition this registration maps to (stable key for filtering). */
   transitionKey: string;
   transitionLabel: string;
+  /** stored / derived from the fee config / unmapped (never guessed). */
+  transitionSource: "stored" | "derived" | "unmapped";
+  /** ISO registration time ("" if unknown). */
+  registeredAt: string;
+  /** Registration group id set by the coach bulk registration ("" for older records). */
+  groupId: string;
   /** Registration fee exactly as stored at registration; null when missing. */
   fee: number | null;
   paid: number;
@@ -41,11 +47,14 @@ export interface ReportFilters {
   transition: string; // "all" | transitionKey
   status: "all" | PayStatus;
   search: string;
+  /** Registration date range (yyyy-mm-dd, inclusive); "" = open. */
+  dateFrom: string;
+  dateTo: string;
 }
 
 export const NO_COACH = "__none__";
 export const DEFAULT_FILTERS: ReportFilters = {
-  school: "all", coach: "all", program: "all", transition: "all", status: "all", search: "",
+  school: "all", coach: "all", program: "all", transition: "all", status: "all", search: "", dateFrom: "", dateTo: "",
 };
 
 const isMoney = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
@@ -62,23 +71,11 @@ export function buildRows(
     if (!s.id || seen.has(s.id)) continue;
     seen.add(s.id);
 
-    const program: ProgramKey =
-      String(s.programType || s.program || "").toUpperCase() === "SELAMBAM" ? "SELAMBAM" : "KARATE";
-    const list = program === "KARATE" ? karate : silambam;
-    const stored = (s as any).examTransition as { from: string | null; to: string; feeId: string } | undefined;
-
-    let matched: ExamTransition | undefined;
-    if (stored?.feeId) matched = list.find((t) => t.id === stored.feeId);
-    if (!matched) {
-      matched = program === "KARATE"
-        ? list.find((t) => t.to === s.beltLevel)
-        : list.find((t) => t.stageNumber != null && String(t.stageNumber) === String(s.stageLevel));
-    }
+    const program: ProgramKey = programOf(s);
+    const tr = resolveStudentTransition(s as any, karate, silambam);
     const storedLevel = s.beltLevel || (s.stageLevel != null ? `Stage ${s.stageLevel}` : "");
-    const transitionLabel = stored
-      ? (stored.from ? `${stored.from} → ${stored.to}` : stored.to)
-      : matched?.label || storedLevel || "—";
-    const currentLevel = stored?.from ?? matched?.from ?? (storedLevel || "—");
+    const transitionLabel = tr.label;
+    const currentLevel = tr.from ?? (tr.source === "unmapped" ? (storedLevel || "—") : "—");
 
     const pd: any = s.paymentDetails;
     const fee = isMoney(pd?.amount) ? pd.amount : null;
@@ -96,8 +93,11 @@ export function buildRows(
       coach: coachId ? coachNames[coachId] || "Unknown Coach" : "Individual",
       program,
       currentLevel,
-      transitionKey: matched?.id || stored?.feeId || `unmapped:${program}:${storedLevel}`,
+      transitionKey: tr.key,
       transitionLabel,
+      transitionSource: tr.source,
+      registeredAt: s.registeredAt ? String(s.registeredAt) : "",
+      groupId: (s as any).registrationGroupId ? String((s as any).registrationGroupId) : "",
       fee,
       paid,
       balance: (fee ?? 0) - paid,
@@ -118,6 +118,10 @@ export function filterRows(rows: PaymentRow[], f: ReportFilters): PaymentRow[] {
     if (f.program !== "all" && r.program !== f.program) return false;
     if (f.transition !== "all" && r.transitionKey !== f.transition) return false;
     if (f.status !== "all" && r.status !== f.status) return false;
+    if (f.dateFrom || f.dateTo) {
+      const day = r.registeredAt.slice(0, 10);
+      if (!day || (f.dateFrom && day < f.dateFrom) || (f.dateTo && day > f.dateTo)) return false;
+    }
     if (!q) return true;
     return r.name.toLowerCase().includes(q) || r.id.toLowerCase().includes(q) ||
       r.reference.toLowerCase().includes(q);
@@ -209,3 +213,139 @@ export const sanitizeFilename = (name: string): string =>
   name.replace(/[^A-Za-z0-9 _.-]+/g, "").trim().replace(/\s+/g, "_").slice(0, 80) || "Report";
 
 export const statusLabel = (s: PayStatus) => (s === "verified" ? "Confirmed" : s === "rejected" ? "Rejected" : "Pending");
+
+// -- Registration groups (Payments -> Recent) ---------------------------------------
+// A group is one coach's bulk registration. New registrations carry the
+// `registrationGroupId` stamped by the coach Bulk Registration screen. Older
+// records have none, so they are clustered per coach+school by registration
+// time (a bulk submit stamps its students within seconds; a gap of more than
+// GROUP_GAP_MS starts a new group) and flagged `inferred`. Registrations that
+// belong to no coach are never grouped.
+export const GROUP_GAP_MS = 2 * 60 * 1000;
+
+export interface RegistrationGroup extends Totals {
+  key: string;
+  groupId: string;
+  inferred: boolean;
+  coachId: string;
+  coach: string;
+  schoolKey: string;
+  school: string;
+  /** Latest registration time in the group (ISO). */
+  registeredAt: string;
+  rows: PaymentRow[];
+  /** Pending rows that can be confirmed: a valid stored fee is required. */
+  eligibleIds: string[];
+}
+
+export const isEligibleForPayment = (r: PaymentRow) => r.status === "pending" && r.fee !== null && r.fee > 0;
+
+export function buildGroups(rows: PaymentRow[]): RegistrationGroup[] {
+  const make = (key: string, groupId: string, inferred: boolean, g: PaymentRow[]): RegistrationGroup => {
+    const latest = g.reduce((m, r) => (r.registeredAt > m ? r.registeredAt : m), "");
+    return {
+      key, groupId, inferred,
+      coachId: g[0].coachId, coach: g[0].coach, schoolKey: g[0].schoolKey, school: g[0].school,
+      registeredAt: latest, rows: g, eligibleIds: g.filter(isEligibleForPayment).map((r) => r.id),
+      ...totalsOf(g),
+    };
+  };
+  const byId = new Map<string, PaymentRow[]>();
+  const legacy = new Map<string, PaymentRow[]>();
+  for (const r of rows) {
+    if (!r.coachId) continue;
+    if (r.groupId) (byId.get(r.groupId) || byId.set(r.groupId, []).get(r.groupId)!).push(r);
+    else {
+      const k = `${r.coachId}|${r.schoolKey}`;
+      (legacy.get(k) || legacy.set(k, []).get(k)!).push(r);
+    }
+  }
+  const groups: RegistrationGroup[] = [...byId.entries()].map(([id, g]) => make(`g:${id}`, id, false, g));
+  for (const [k, list] of legacy) {
+    const sorted = [...list].sort((a, b) => a.registeredAt.localeCompare(b.registeredAt));
+    let cur: PaymentRow[] = [];
+    let last = NaN;
+    const flush = () => { if (cur.length) groups.push(make(`i:${k}:${cur[0].registeredAt}:${cur[0].id}`, "", true, cur)); cur = []; };
+    for (const r of sorted) {
+      const t = r.registeredAt ? Date.parse(r.registeredAt) : NaN;
+      if (cur.length && (isNaN(t) || isNaN(last) || t - last > GROUP_GAP_MS)) flush();
+      cur.push(r);
+      last = t;
+    }
+    flush();
+  }
+  return groups.sort((a, b) => b.registeredAt.localeCompare(a.registeredAt));
+}
+
+// -- PDF helpers --------------------------------------------------------------------
+/**
+ * jsPDF's built-in fonts are WinAnsi only: the arrow in "White → Yellow"
+ * (U+2192) has no glyph there and prints as garbage such as "r". The PDF
+ * therefore writes the same transition as "White to Yellow"; the stored value,
+ * the on-screen label and the Excel export keep the arrow. Anything else
+ * outside Latin-1 is replaced with "?" rather than printed as corrupt glyphs.
+ */
+export const pdfSafe = (v: string): string =>
+  String(v ?? "")
+    .replace(/\s*[\u2192\u2794\u27A1]\s*/g, " to ")
+    .replace(/\u20B9/g, "Rs. ")
+    .replace(/[\u2013\u2014]/g, "-")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/[^\x20-\x7E\xA0-\xFF]/g, "?")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+export interface TransitionSummaryRow extends Totals {
+  key: string;
+  program: ProgramKey;
+  label: string;
+  source: PaymentRow["transitionSource"];
+}
+
+/** One row per exact transition present in `rows`, in configured order. */
+export function transitionSummary(rows: PaymentRow[], order: string[] = []): TransitionSummaryRow[] {
+  const groups = new Map<string, PaymentRow[]>();
+  for (const r of rows) (groups.get(r.transitionKey) || groups.set(r.transitionKey, []).get(r.transitionKey)!).push(r);
+  const idx = (k: string) => { const i = order.indexOf(k); return i === -1 ? 1e6 : i; };
+  return [...groups.entries()]
+    .map(([key, g]) => ({ key, program: g[0].program, label: g[0].transitionLabel, source: g[0].transitionSource, ...totalsOf(g) }))
+    .sort((a, b) => (a.program === b.program ? 0 : a.program === "KARATE" ? -1 : 1) || idx(a.key) - idx(b.key) || a.label.localeCompare(b.label));
+}
+
+export interface CoachSection { coachId: string; coach: string; schools: string[]; rows: PaymentRow[]; totals: Totals }
+
+/** Detail rows grouped by the coach on the registration record (no coach => "Unassigned Coach", last). */
+export function coachSections(rows: PaymentRow[]): CoachSection[] {
+  const groups = new Map<string, PaymentRow[]>();
+  for (const r of rows) (groups.get(r.coachId) || groups.set(r.coachId, []).get(r.coachId)!).push(r);
+  return [...groups.entries()]
+    .map(([coachId, g]) => ({
+      coachId,
+      coach: coachId ? g[0].coach : "Unassigned Coach",
+      schools: [...new Set(g.map((r) => r.school))].sort(),
+      rows: [...g].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+      totals: totalsOf(g),
+    }))
+    .sort((a, b) => (a.coachId === "" ? 1 : b.coachId === "" ? -1 : a.coach.localeCompare(b.coach)));
+}
+
+/** Every section of the PDF must add up to the same numbers; refuse to export otherwise. */
+export function assertReportReconciles(rows: PaymentRow[], order: string[] = []): void {
+  const t = totalsOf(rows);
+  const check = (label: string, parts: Totals[]) => {
+    const sum = (f: (x: Totals) => number) => parts.reduce((a, x) => a + f(x), 0);
+    if (sum((x) => x.students) !== t.students || sum((x) => x.totalAmount) !== t.totalAmount ||
+        sum((x) => x.paidAmount) !== t.paidAmount || sum((x) => x.pendingAmount) !== t.pendingAmount ||
+        sum((x) => x.confirmedCount) !== t.confirmedCount || sum((x) => x.pendingCount) !== t.pendingCount ||
+        sum((x) => x.rejectedCount) !== t.rejectedCount) {
+      throw new Error(`Report totals do not reconcile (${label}).`);
+    }
+  };
+  check("transition summary", transitionSummary(rows, order));
+  check("coach summary", coachSummary(rows));
+  check("school summary", schoolSummary(rows));
+  check("coach detail sections", coachSections(rows).map((s) => s.totals));
+  if (new Set(rows.map((r) => r.id)).size !== rows.length) throw new Error("Report contains a duplicated registration.");
+}

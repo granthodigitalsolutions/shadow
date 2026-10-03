@@ -78,6 +78,9 @@ export default function BulkRegistration() {
     try {
         showToast("Registering students...", "info");
         const studentsPayload: any[] = [];
+        // One id per submit lets the Admin Payments screen show this coach's
+        // registration as a single group (older records have none).
+        const registrationGroupId = crypto.randomUUID();
 
         for (const s of students) {
           const { tempId, fee, ...rest } = s;
@@ -90,6 +93,7 @@ export default function BulkRegistration() {
 
           studentsPayload.push({
             ...rest,
+            registrationGroupId,
             qrUrl: "",
             secretaryId: user.uid,
             paymentStatus: "pending",   // Starts as pending — Admin confirms manually

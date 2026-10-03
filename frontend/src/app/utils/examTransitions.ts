@@ -82,3 +82,56 @@ export function buildSilambamTransitions(allFees: SilambanFeeStructure[]): ExamT
 export function formatTransitionOption(t: ExamTransition): string {
   return t.feeConfigured ? `${t.label} — ₹${t.fee.toLocaleString()}` : `${t.label} — fee not set`;
 }
+
+// -- Student -> transition (one definition shared by every Admin screen) ----------
+export interface StudentTransition {
+  /** Fee-document id of the transition; `unmapped:...` when it cannot be verified. */
+  key: string;
+  label: string;
+  from: string | null;
+  /** stored = recorded at registration; derived = matched via the fee config; unmapped = unverifiable. */
+  source: "stored" | "derived" | "unmapped";
+}
+
+type StudentLike = {
+  programType?: string; program?: string; beltLevel?: string; stageLevel?: number | string | null;
+  examTransition?: { from: string | null; to: string; feeId: string };
+};
+
+export const programOf = (s: StudentLike): "KARATE" | "SELAMBAM" =>
+  String(s.programType || s.program || "").toUpperCase() === "SELAMBAM" ? "SELAMBAM" : "KARATE";
+
+/**
+ * The student's registration transition. Uses the transition stored at
+ * registration when present; otherwise it is derived from the Admin fee
+ * configuration (a fee doc is the *target* belt/stage, "from" is the previous
+ * entry - the same rule as the Fee Structure page). Anything that cannot be
+ * matched stays "unmapped" - a transition is never guessed.
+ */
+export function resolveStudentTransition(s: StudentLike, karate: ExamTransition[], silambam: ExamTransition[]): StudentTransition {
+  const program = programOf(s);
+  const list = program === "KARATE" ? karate : silambam;
+  const level = s.beltLevel || (s.stageLevel != null && s.stageLevel !== "" ? `Stage ${s.stageLevel}` : "");
+  const st = s.examTransition;
+  if (st && st.feeId) {
+    return { key: st.feeId, label: st.from ? `${st.from} → ${st.to}` : st.to, from: st.from ?? null, source: "stored" };
+  }
+  const matched = program === "KARATE"
+    ? list.find((t) => t.to === s.beltLevel)
+    : list.find((t) => t.stageNumber != null && String(t.stageNumber) === String(s.stageLevel));
+  if (matched) return { key: matched.id, label: matched.label, from: matched.from, source: "derived" };
+  return { key: `unmapped:${program}:${level}`, label: level || "—", from: null, source: "unmapped" };
+}
+
+/** Dropdown options: complete "from → to" transitions from the config (never bare belt names). */
+export function transitionFilterOptions(
+  program: "all" | "KARATE" | "SELAMBAM",
+  karate: ExamTransition[],
+  silambam: ExamTransition[],
+): { key: string; label: string }[] {
+  const out: { key: string; label: string }[] = [];
+  const prefix = program === "all";
+  if (program !== "SELAMBAM") karate.forEach((t) => out.push({ key: t.id, label: `${prefix ? "Karate: " : ""}${t.label}` }));
+  if (program !== "KARATE") silambam.forEach((t) => out.push({ key: t.id, label: `${prefix ? "Silambam: " : ""}${t.label}` }));
+  return out;
+}

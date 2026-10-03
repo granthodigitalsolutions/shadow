@@ -73,6 +73,8 @@ export interface StudentRecord {
   stageLevel?: number; // For Selambam
   // Promotion the student is registering for (from -> to). Optional; does not replace beltLevel/stageLevel.
   examTransition?: { from: string | null; to: string; feeId: string };
+  // Set by the coach Bulk Registration submit; groups one registration for Admin payments.
+  registrationGroupId?: string;
   secretaryId?: string; // For Coach portal ownership
 
   // Test & Batch assignment
