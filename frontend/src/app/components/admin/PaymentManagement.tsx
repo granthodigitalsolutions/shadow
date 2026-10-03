@@ -1,45 +1,42 @@
-import { useState, useEffect, useMemo } from "react";
+import { Fragment, useState, useEffect, useMemo } from "react";
 import {
-  CreditCard, Search, Filter, ChevronDown, CheckCircle2, Clock, XCircle,
-  CheckSquare, Square, RefreshCw, Users,
+  CreditCard, Search, ChevronDown, ChevronRight, CheckCircle2, Clock, XCircle,
+  CheckSquare, Square, RefreshCw, Users, FileText, FileSpreadsheet, AlertCircle, X, ArrowUpDown,
 } from "lucide-react";
 import AdminLayout from "./AdminLayout";
-import { firebaseStudentService, firebaseCoachService } from "../../services/firebaseData";
+import {
+  firebaseStudentService, firebaseCoachService, firebaseFeeStructureService, firebaseSilambanFeeService,
+} from "../../services/firebaseData";
 import { auth } from "../../config/firebase";
-import { StudentRecord } from "../../types/admin";
 import { useToast } from "../../hooks/useToast";
 import { useDialog } from "../../contexts/DialogContext";
 import { useProgram } from "../../contexts/ProgramContext";
+import { buildKarateTransitions, buildSilambamTransitions } from "../../utils/examTransitions";
+import {
+  PaymentRow, ReportFilters, DEFAULT_FILTERS, NO_COACH, PayStatus,
+  buildRows, filterRows, totalsOf, coachSummary, schoolSummary, transitionBreakdown,
+  formatINR, statusLabel,
+} from "../../utils/paymentReport";
+import type { StudentRecord } from "../../types/admin";
 
-type StatusTab = "pending" | "confirmed" | "all";
+const PAGE_SIZES = [25, 50, 100];
+type SortKey = "name" | "fee" | "status" | "date";
 
-const NO_COACH = "__none__";
-const PAGE_SIZE = 50;
-
-const isConfirmed = (s: StudentRecord) => s.paymentStatus === "verified";
-
-const formatAmount = (amount?: number) =>
-  amount ? `₹${amount.toLocaleString()}` : "—";
-
-const formatDateTime = (value: any): string => {
-  if (!value) return "—";
-  const d = typeof value?.toDate === "function" ? value.toDate() : new Date(value);
-  if (isNaN(d.getTime())) return "—";
-  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+const formatDate = (iso: string): string => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString(undefined, { dateStyle: "medium" });
 };
 
-const beltLabel = (s: StudentRecord) =>
-  `${s.programType} — ${s.beltLevel || s.stageLevel || "N/A"}`;
-
-function StatusBadge({ student }: { student: StudentRecord }) {
-  if (isConfirmed(student)) {
+function StatusBadge({ status }: { status: PayStatus }) {
+  if (status === "verified") {
     return (
       <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-bold border border-emerald-200 dark:border-emerald-500/20">
         <CheckCircle2 className="w-3.5 h-3.5" /> Confirmed
       </span>
     );
   }
-  if (student.paymentStatus === "rejected") {
+  if (status === "rejected") {
     return (
       <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 text-xs font-bold border border-red-200 dark:border-red-500/20">
         <XCircle className="w-3.5 h-3.5" /> Rejected
@@ -53,6 +50,19 @@ function StatusBadge({ student }: { student: StudentRecord }) {
   );
 }
 
+const selectCls =
+  "w-full px-3 py-2 border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg text-sm text-gray-900 dark:text-white cursor-pointer";
+
+function Card({ label, value, tone, note }: { label: string; value: string | number; tone?: string; note?: string }) {
+  return (
+    <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 text-center">
+      <p className={`text-2xl sm:text-3xl font-bold tracking-tight ${tone || "text-zinc-900 dark:text-zinc-50"}`}>{value}</p>
+      <p className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mt-1">{label}</p>
+      {note && <p className="text-[10px] text-zinc-400 mt-0.5">{note}</p>}
+    </div>
+  );
+}
+
 export default function PaymentManagement() {
   const { showToast } = useToast();
   const { showConfirm } = useDialog();
@@ -60,102 +70,139 @@ export default function PaymentManagement() {
 
   const [students, setStudents] = useState<StudentRecord[]>([]);
   const [coachNames, setCoachNames] = useState<Record<string, string>>({});
+  const [karateFees, setKarateFees] = useState<any[]>([]);
+  const [silambamFees, setSilambamFees] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const [statusTab, setStatusTab] = useState<StatusTab>("pending");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [coachFilter, setCoachFilter] = useState("all");
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [filters, setFilters] = useState<ReportFilters>(DEFAULT_FILTERS);
+  const [sortKey, setSortKey] = useState<SortKey>("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [pageSize, setPageSize] = useState(25);
+  const [page, setPage] = useState(0);
+  const [expandedSchools, setExpandedSchools] = useState<Set<string>>(new Set());
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [exporting, setExporting] = useState<null | "pdf" | "xlsx">(null);
 
-  // Live student feed — a coach registering a student (or another admin
-  // approving one) shows up here without a manual refresh.
+  const setFilter = <K extends keyof ReportFilters>(key: K, value: ReportFilters[K]) =>
+    setFilters((f) => ({ ...f, [key]: value }));
+
+  // Live student feed - a coach registering a student (or another admin
+  // approving one) shows up here without a manual refresh. One listener,
+  // cleaned up on unmount / program change.
   useEffect(() => {
     setLoading(true);
+    setLoadError(null);
     setSelectedIds(new Set());
-    const unsubscribe = firebaseStudentService.listenAll((list) => {
-      setStudents(list);
-      setLoading(false);
-    }, currentProgram);
+    const unsubscribe = firebaseStudentService.listenAll(
+      (list) => {
+        setStudents(list);
+        setLoading(false);
+      },
+      currentProgram === "ALL" ? undefined : (currentProgram as any),
+      (err) => {
+        console.error("Payments listener failed:", err);
+        setLoadError(
+          /permission/i.test(err?.message || "")
+            ? "You don't have permission to view payment records."
+            : "Couldn't load payment records. Check your connection and try again.",
+        );
+        setLoading(false);
+      },
+    );
     return () => unsubscribe();
-  }, [currentProgram]);
+  }, [currentProgram, reloadKey]);
 
   useEffect(() => {
     firebaseCoachService
       .getAll()
-      .then((coaches) => {
-        setCoachNames(
-          Object.fromEntries(coaches.map((c: any) => [c.uid || c.id, c.fullName || c.email || "Coach"])),
-        );
-      })
+      .then((coaches) =>
+        setCoachNames(Object.fromEntries(coaches.map((c: any) => [c.uid || c.id, c.fullName || c.email || "Coach"]))),
+      )
       .catch((err) => console.error("Failed to load coaches:", err));
+    // Belt/stage options come from the Admin fee configuration - never hardcoded.
+    Promise.all([firebaseFeeStructureService.getAll(), firebaseSilambanFeeService.getAll()])
+      .then(([k, s]) => { setKarateFees(k); setSilambamFees(s); })
+      .catch((err) => console.error("Failed to load fee structure:", err));
   }, []);
 
-  // A "payment request" is anything an admin still has to approve, plus the
-  // coach-registered students already approved (so Confirmed shows history).
-  const requests = useMemo(
-    () => students.filter((s) => !isConfirmed(s) || !!s.secretaryId),
-    [students],
+  const karateTransitions = useMemo(() => buildKarateTransitions(karateFees), [karateFees]);
+  const silambamTransitions = useMemo(() => buildSilambamTransitions(silambamFees), [silambamFees]);
+  const allRows = useMemo(
+    () => buildRows(students, coachNames, karateTransitions, silambamTransitions),
+    [students, coachNames, karateTransitions, silambamTransitions],
   );
 
+  // Dropdown options come from the data / configuration.
+  const schoolOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    allRows.forEach((r) => m.set(r.schoolKey, r.school));
+    return [...m.entries()].map(([key, name]) => ({ key, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [allRows]);
+
   const coachOptions = useMemo(() => {
-    const ids = new Set<string>();
-    requests.forEach((s) => s.secretaryId && ids.add(s.secretaryId));
-    return Array.from(ids)
-      .map((id) => ({ id, name: coachNames[id] || "Unknown Coach" }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [requests, coachNames]);
-
-  const coachOf = (s: StudentRecord) => (s.secretaryId ? coachNames[s.secretaryId] || "Unknown Coach" : "");
-
-  const pending = useMemo(() => requests.filter((s) => !isConfirmed(s)), [requests]);
-  const confirmed = useMemo(() => requests.filter(isConfirmed), [requests]);
-  const sumAmount = (list: StudentRecord[]) => list.reduce((sum, s) => sum + (s.paymentDetails?.amount || 0), 0);
-
-  const filtered = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    const base = statusTab === "pending" ? pending : statusTab === "confirmed" ? confirmed : requests;
-    return base.filter((s) => {
-      if (coachFilter === NO_COACH && s.secretaryId) return false;
-      if (coachFilter !== "all" && coachFilter !== NO_COACH && s.secretaryId !== coachFilter) return false;
-      if (!q) return true;
-      return (
-        (s.name || "").toLowerCase().includes(q) ||
-        (s.id || "").toLowerCase().includes(q) ||
-        (s.school || "").toLowerCase().includes(q) ||
-        coachOf(s).toLowerCase().includes(q) ||
-        (s.paymentDetails?.transactionId || "").toLowerCase().includes(q)
-      );
+    const m = new Map<string, string>();
+    allRows.forEach((r) => {
+      if (r.coachId && (filters.school === "all" || r.schoolKey === filters.school)) m.set(r.coachId, r.coach);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusTab, pending, confirmed, requests, searchQuery, coachFilter, coachNames]);
+    return [...m.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [allRows, filters.school]);
 
-  useEffect(() => {
-    setVisibleCount(PAGE_SIZE);
-    setSelectedIds(new Set());
-  }, [statusTab, searchQuery, coachFilter]);
+  const transitionOptions = useMemo(() => {
+    const out: { key: string; label: string }[] = [];
+    if (filters.program !== "SELAMBAM") karateTransitions.forEach((t) => out.push({ key: t.id, label: `Karate: ${t.label}` }));
+    if (filters.program !== "KARATE") silambamTransitions.forEach((t) => out.push({ key: t.id, label: `Silambam: ${t.label}` }));
+    return out;
+  }, [karateTransitions, silambamTransitions, filters.program]);
 
-  const visible = filtered.slice(0, visibleCount);
-  const filteredPending = useMemo(() => filtered.filter((s) => !isConfirmed(s)), [filtered]);
-  const allPendingSelected = filteredPending.length > 0 && filteredPending.every((s) => selectedIds.has(s.id));
+  // One filtered dataset drives the cards, tables, breakdowns and exports.
+  const filtered = useMemo(() => filterRows(allRows, filters), [allRows, filters]);
+  const totals = useMemo(() => totalsOf(filtered), [filtered]);
+  const coachRows = useMemo(() => coachSummary(filtered), [filtered]);
+  const schoolRows = useMemo(() => schoolSummary(filtered), [filtered]);
+  const breakdown = useMemo(() => transitionBreakdown(filtered), [filtered]);
+  const statusCounts = useMemo(() => {
+    const base = filterRows(allRows, { ...filters, status: "all" });
+    return {
+      all: base.length,
+      pending: base.filter((r) => r.status === "pending").length,
+      verified: base.filter((r) => r.status === "verified").length,
+      rejected: base.filter((r) => r.status === "rejected").length,
+    };
+  }, [allRows, filters]);
 
-  const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  const isFiltered = JSON.stringify(filters) !== JSON.stringify(DEFAULT_FILTERS);
+
+  const sorted = useMemo(() => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    const val = (r: PaymentRow): string | number =>
+      sortKey === "name" ? r.name.toLowerCase() : sortKey === "fee" ? r.fee ?? -1 : sortKey === "status" ? r.status : r.paymentDate;
+    return [...filtered].sort((a, b) => (val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0) * dir);
+  }, [filtered, sortKey, sortDir]);
+
+  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const visible = sorted.slice(page * pageSize, page * pageSize + pageSize);
+
+  useEffect(() => { setPage(0); setSelectedIds(new Set()); }, [filters, pageSize]);
+  useEffect(() => { if (page > pageCount - 1) setPage(pageCount - 1); }, [page, pageCount]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir(key === "name" ? "asc" : "desc"); }
   };
 
-  const toggleSelectAll = () => {
-    setSelectedIds(allPendingSelected ? new Set() : new Set(filteredPending.map((s) => s.id)));
-  };
+  const pendingInView = useMemo(() => filtered.filter((r) => r.status === "pending"), [filtered]);
+  const allPendingSelected = pendingInView.length > 0 && pendingInView.every((r) => selectedIds.has(r.id));
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleSelectAll = () => setSelectedIds(allPendingSelected ? new Set() : new Set(pendingInView.map((r) => r.id)));
 
   // Same write the coach-detail screen (AdminSchoolDetail) performs to confirm
-  // a student — paymentStatus flips to "verified" and who/when is stamped.
+  // a student - paymentStatus flips to "verified" and who/when is stamped.
   // The row updates optimistically and rolls back if the write fails.
   const approvePayments = async (ids: string[]): Promise<boolean> => {
     const adminUid = auth.currentUser?.uid;
@@ -174,11 +221,7 @@ export default function PaymentManagement() {
     const confirmedAt = new Date();
     const results = await Promise.allSettled(
       ids.map((id) =>
-        firebaseStudentService.update(id, {
-          paymentStatus: "verified",
-          confirmedBy: adminUid,
-          confirmedAt,
-        } as any),
+        firebaseStudentService.update(id, { paymentStatus: "verified", confirmedBy: adminUid, confirmedAt } as any),
       ),
     );
 
@@ -191,16 +234,8 @@ export default function PaymentManagement() {
       );
     }
 
-    setBusyIds((prev) => {
-      const next = new Set(prev);
-      ids.forEach((id) => next.delete(id));
-      return next;
-    });
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      ids.forEach((id) => next.delete(id));
-      return next;
-    });
+    setBusyIds((prev) => { const n = new Set(prev); ids.forEach((id) => n.delete(id)); return n; });
+    setSelectedIds((prev) => { const n = new Set(prev); ids.forEach((id) => n.delete(id)); return n; });
 
     const okCount = ids.length - failedIds.length;
     if (okCount > 0) {
@@ -211,135 +246,326 @@ export default function PaymentManagement() {
         "success",
       );
     }
-    if (failedIds.length > 0) {
-      showToast(`Failed to approve ${failedIds.length} payment${failedIds.length > 1 ? "s" : ""}`, "error");
-    }
+    if (failedIds.length > 0) showToast(`Failed to approve ${failedIds.length} payment${failedIds.length > 1 ? "s" : ""}`, "error");
     return failedIds.length === 0;
   };
 
   const handleBulkApprove = async () => {
     if (selectedIds.size === 0) return;
-    const confirmedByAdmin = await showConfirm({
+    const ok = await showConfirm({
       title: "Confirm Selected Students?",
       message: `This will mark ${selectedIds.size} student(s) as Confirmed and eligible for batch assignment.`,
       confirmText: "Confirm All",
       variant: "success",
     });
-    if (!confirmedByAdmin) return;
+    if (!ok) return;
     setBulkBusy(true);
     await approvePayments(Array.from(selectedIds));
     setBulkBusy(false);
   };
 
-  const renderApproveButton = (student: StudentRecord, full?: boolean) => {
-    const busy = busyIds.has(student.id);
+  // -- Export (exactly the filtered rows on screen) ---------------------------
+  const exportContext = () => {
+    const school = filters.school !== "all" ? schoolOptions.find((s) => s.key === filters.school)?.name : undefined;
+    const coach = filters.coach === NO_COACH ? "Individual" : filters.coach !== "all" ? coachNames[filters.coach] || "Coach" : undefined;
+    const trans = filters.transition !== "all" ? transitionOptions.find((t) => t.key === filters.transition)?.label : undefined;
+    const lines = [
+      school && `School: ${school}`,
+      coach && `Coach: ${coach}`,
+      filters.program !== "all" && `Exam: ${filters.program === "KARATE" ? "Karate" : "Silambam"}`,
+      trans && `Belt/Stage: ${trans}`,
+      filters.status !== "all" && `Payment status: ${statusLabel(filters.status)}`,
+      filters.search.trim() && `Search: "${filters.search.trim()}"`,
+    ].filter(Boolean) as string[];
+    return { rows: sorted, filters, filterLines: lines, schoolName: school, coachName: coach };
+  };
+
+  const runExport = async (kind: "pdf" | "xlsx") => {
+    if (exporting || sorted.length === 0) return;
+    setExporting(kind);
+    try {
+      const mod = await import("../../utils/paymentReportExport");
+      const name = kind === "pdf" ? await mod.exportPaymentPdf(exportContext()) : await mod.exportPaymentExcel(exportContext());
+      showToast(`${name} downloaded`, "success");
+    } catch (err) {
+      console.error(`Payment ${kind} export failed:`, err);
+      showToast(`Couldn't generate the ${kind === "pdf" ? "PDF" : "Excel"} report. Please try again.`, "error");
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const renderApproveButton = (row: PaymentRow, full?: boolean) => {
+    const busy = busyIds.has(row.id);
     return (
       <button
-        onClick={() => approvePayments([student.id])}
+        onClick={() => approvePayments([row.id])}
         disabled={busy}
-        className={`${full ? "w-full justify-center px-3 py-2.5" : "px-3.5 py-2"} text-xs font-bold bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg transition-colors disabled:opacity-50 inline-flex items-center gap-1.5 whitespace-nowrap`}
+        className={`${full ? "w-full justify-center px-3 py-2.5" : "px-3 py-1.5"} text-xs font-bold bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg transition-colors disabled:opacity-50 inline-flex items-center gap-1.5 whitespace-nowrap`}
       >
         {busy ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-        Approve Payment
+        Approve
       </button>
     );
   };
 
+  const SortTh = ({ k, children, className = "" }: { k: SortKey; children: React.ReactNode; className?: string }) => (
+    <th className={`p-3 ${className}`}>
+      <button onClick={() => toggleSort(k)} className="inline-flex items-center gap-1 uppercase tracking-wider font-semibold hover:text-zinc-800 dark:hover:text-zinc-200">
+        {children}
+        <ArrowUpDown className={`w-3 h-3 ${sortKey === k ? "text-blue-500" : "opacity-40"}`} />
+      </button>
+    </th>
+  );
+
+  const showBreakdown = filters.coach !== "all" || filters.school !== "all";
+  const feeCell = (r: PaymentRow) => (r.fee === null ? <span className="text-amber-600" title="No fee stored for this registration">N/A</span> : formatINR(r.fee));
+
   return (
     <AdminLayout>
       <div className="space-y-6">
-        {/* Header + stats */}
+        {/* Header + summary cards (all figures follow the active filters) */}
         <div className="bg-white dark:bg-zinc-950 rounded-lg shadow-md dark:shadow-none dark:border dark:border-zinc-800 p-6">
-          <div className="flex items-center gap-4 mb-6">
-            <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-center">
-              <CreditCard className="w-6 h-6 text-indigo-500" />
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-center">
+                <CreditCard className="w-6 h-6 text-indigo-500" />
+              </div>
+              <div>
+                <h2 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50" style={{ fontFamily: "'Bebas Neue', sans-serif" }}>
+                  PAYMENT MANAGEMENT
+                </h2>
+                <p className="text-sm font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mt-0.5">
+                  {isFiltered ? "Showing filtered records" : "All registrations"}
+                </p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50" style={{ fontFamily: "'Bebas Neue', sans-serif" }}>
-                PAYMENT MANAGEMENT
-              </h2>
-              <p className="text-sm font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mt-0.5">Review and approve student payment requests</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => runExport("pdf")}
+                disabled={!!exporting || loading || sorted.length === 0}
+                className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-bold bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all"
+              >
+                {exporting === "pdf" ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+                Export PDF
+              </button>
+              <button
+                onClick={() => runExport("xlsx")}
+                disabled={!!exporting || loading || sorted.length === 0}
+                className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all"
+              >
+                {exporting === "xlsx" ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
+                Export Excel
+              </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 text-center">
-              <p className="text-3xl font-bold text-blue-500 tracking-tight">{loading ? "…" : pending.length}</p>
-              <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mt-1">Pending Requests</p>
-            </div>
-            <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 text-center">
-              <p className="text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight">{loading ? "…" : `₹${sumAmount(pending).toLocaleString()}`}</p>
-              <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mt-1">Pending Amount</p>
-            </div>
-            <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 text-center">
-              <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400 tracking-tight">{loading ? "…" : confirmed.length}</p>
-              <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mt-1">Confirmed</p>
-            </div>
-            <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 text-center">
-              <p className="text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight">{loading ? "…" : `₹${sumAmount(confirmed).toLocaleString()}`}</p>
-              <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mt-1">Confirmed Amount</p>
-            </div>
+          <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+            <Card label="Registered Students" value={loading ? "…" : totals.students} />
+            <Card label="Total Amount" value={loading ? "…" : formatINR(totals.totalAmount)} />
+            <Card label="Paid Amount" value={loading ? "…" : formatINR(totals.paidAmount)} tone="text-emerald-600 dark:text-emerald-400" note="confirmed payments" />
+            <Card label="Pending Amount" value={loading ? "…" : formatINR(totals.pendingAmount)} tone="text-blue-500" note={totals.rejectedAmount ? `incl. ${formatINR(totals.rejectedAmount)} rejected` : "unpaid balance"} />
+            <Card label="Confirmed Payments" value={loading ? "…" : totals.confirmedCount} tone="text-emerald-600 dark:text-emerald-400" />
+            <Card label="Pending Payments" value={loading ? "…" : totals.pendingCount} tone="text-blue-500" note={totals.rejectedCount ? `${totals.rejectedCount} rejected` : undefined} />
           </div>
+          {!loading && totals.missingFee > 0 && (
+            <p className="mt-3 text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5" />
+              {totals.missingFee} registration{totals.missingFee > 1 ? "s have" : " has"} no stored fee - counted as students but not in any amount.
+            </p>
+          )}
         </div>
 
-        {/* Filters & search */}
-        <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-800 p-4 flex flex-wrap gap-4 items-center">
-          <div className="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-1 overflow-x-auto max-w-full">
-            {([
-              { key: "pending", label: "Pending", count: pending.length },
-              { key: "confirmed", label: "Confirmed", count: confirmed.length },
-              { key: "all", label: "All", count: requests.length },
-            ] as const).map((tab) => (
+        {/* Filters */}
+        <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-800 p-4 space-y-4">
+          <div className="flex flex-wrap gap-3 items-center">
+            <div className="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-1 overflow-x-auto max-w-full">
+              {([
+                { key: "all", label: "All", count: statusCounts.all },
+                { key: "pending", label: "Pending", count: statusCounts.pending },
+                { key: "verified", label: "Confirmed", count: statusCounts.verified },
+                { key: "rejected", label: "Rejected", count: statusCounts.rejected },
+              ] as const).map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setFilter("status", tab.key)}
+                  className={`shrink-0 px-3.5 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
+                    filters.status === tab.key
+                      ? "bg-white dark:bg-zinc-950 text-zinc-900 dark:text-white shadow-sm"
+                      : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200"
+                  }`}
+                >
+                  {tab.label} ({tab.count})
+                </button>
+              ))}
+            </div>
+
+            <div className="flex-1 min-w-[220px] relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search student name, registration ID or reference..."
+                value={filters.search}
+                onChange={(e) => setFilter("search", e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 rounded-lg text-gray-900 dark:text-white placeholder-zinc-400"
+              />
+            </div>
+
+            {isFiltered && (
               <button
-                key={tab.key}
-                onClick={() => setStatusTab(tab.key)}
-                className={`shrink-0 px-3.5 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
-                  statusTab === tab.key
-                    ? "bg-white dark:bg-zinc-950 text-zinc-900 dark:text-white shadow-sm"
-                    : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200"
-                }`}
+                onClick={() => setFilters(DEFAULT_FILTERS)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-zinc-600 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700"
               >
-                {tab.label} ({tab.count})
+                <X className="w-3.5 h-3.5" /> Clear Filters
               </button>
-            ))}
+            )}
           </div>
 
-          <div className="flex-1 min-w-[220px] relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search student, ID, school or coach..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 rounded-lg text-gray-900 dark:text-white"
-            />
-          </div>
-
-          <div className="relative">
-            <select
-              value={coachFilter}
-              onChange={(e) => setCoachFilter(e.target.value)}
-              className="appearance-none pl-10 pr-8 py-2 border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg text-gray-900 dark:text-white cursor-pointer max-w-[240px]"
-            >
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <select value={filters.school} onChange={(e) => setFilters((f) => ({ ...f, school: e.target.value, coach: "all" }))} className={selectCls} aria-label="School">
+              <option value="all">All Schools</option>
+              {schoolOptions.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
+            </select>
+            <select value={filters.coach} onChange={(e) => setFilter("coach", e.target.value)} className={selectCls} aria-label="Coach">
               <option value="all">All Coaches</option>
               {coachOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               <option value={NO_COACH}>No coach (individual)</option>
             </select>
-            <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <select value={filters.program} onChange={(e) => setFilters((f) => ({ ...f, program: e.target.value as any, transition: "all" }))} className={selectCls} aria-label="Exam type">
+              <option value="all">Karate &amp; Silambam</option>
+              <option value="KARATE">Karate</option>
+              <option value="SELAMBAM">Silambam</option>
+            </select>
+            <select value={filters.transition} onChange={(e) => setFilter("transition", e.target.value)} className={selectCls} aria-label="Belt or stage transition">
+              <option value="all">All Belts / Stages</option>
+              {transitionOptions.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+            </select>
           </div>
         </div>
 
-        {/* Payment requests */}
+        {loadError && (
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-xl p-4 flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-red-700 dark:text-red-400 flex items-center gap-2"><AlertCircle className="w-4 h-4" />{loadError}</p>
+            <button onClick={() => setReloadKey((k) => k + 1)} className="px-3 py-1.5 text-xs font-bold bg-red-600 text-white rounded-lg">Retry</button>
+          </div>
+        )}
+
+        {/* Selected coach / school breakdown */}
+        {showBreakdown && !loading && filtered.length > 0 && (
+          <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-sm p-5 space-y-3">
+            <h3 className="font-bold text-zinc-900 dark:text-zinc-50">
+              {filters.coach !== "all" && filters.coach !== NO_COACH ? coachNames[filters.coach] || "Coach" : filters.school !== "all" ? schoolOptions.find((s) => s.key === filters.school)?.name : "Selection"} — breakdown
+            </h3>
+            <div className="flex flex-wrap gap-2 text-xs font-bold">
+              <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200">Karate: {totals.karate}</span>
+              <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200">Silambam: {totals.silambam}</span>
+              <span className="px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">Confirmed: {totals.confirmedCount}</span>
+              <span className="px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400">Pending: {totals.pendingCount}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                  <tr><th className="py-2 pr-3">Belt / Stage</th><th className="py-2 pr-3 text-right">Students</th><th className="py-2 pr-3 text-right">Fees</th><th className="py-2 pr-3 text-right">Paid</th><th className="py-2 text-right">Pending</th></tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                  {breakdown.map((b) => (
+                    <tr key={b.key} className="text-zinc-800 dark:text-zinc-200">
+                      <td className="py-1.5 pr-3">{b.label}</td>
+                      <td className="py-1.5 pr-3 text-right">{b.count}</td>
+                      <td className="py-1.5 pr-3 text-right">{formatINR(b.fee)}</td>
+                      <td className="py-1.5 pr-3 text-right">{formatINR(b.paid)}</td>
+                      <td className="py-1.5 text-right">{formatINR(b.pending)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Coach-wise and school-wise summaries */}
+        {!loading && filtered.length > 0 && (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-sm overflow-hidden">
+              <h3 className="p-4 font-bold text-zinc-900 dark:text-zinc-50 border-b border-zinc-100 dark:border-zinc-800">Coach-wise Summary</h3>
+              <div className="overflow-x-auto max-h-80">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-zinc-50 dark:bg-zinc-900/50 text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400 sticky top-0">
+                    <tr><th className="p-3">Coach</th><th className="p-3">School</th><th className="p-3 text-right">Students</th><th className="p-3 text-right">Fees</th><th className="p-3 text-right">Paid</th><th className="p-3 text-right">Pending</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800 text-zinc-800 dark:text-zinc-200">
+                    {coachRows.map((c) => (
+                      <tr key={`${c.coachId}|${c.schoolKey}`}>
+                        <td className="p-3 font-semibold whitespace-nowrap">{c.coach}</td>
+                        <td className="p-3">{c.school}</td>
+                        <td className="p-3 text-right">{c.students}</td>
+                        <td className="p-3 text-right whitespace-nowrap">{formatINR(c.totalAmount)}</td>
+                        <td className="p-3 text-right whitespace-nowrap">{formatINR(c.paidAmount)}</td>
+                        <td className="p-3 text-right whitespace-nowrap">{formatINR(c.pendingAmount)}</td>
+                      </tr>
+                    ))}
+                    <tr className="font-bold bg-zinc-50 dark:bg-zinc-900/50">
+                      <td className="p-3" colSpan={2}>Total</td>
+                      <td className="p-3 text-right">{totals.students}</td>
+                      <td className="p-3 text-right whitespace-nowrap">{formatINR(totals.totalAmount)}</td>
+                      <td className="p-3 text-right whitespace-nowrap">{formatINR(totals.paidAmount)}</td>
+                      <td className="p-3 text-right whitespace-nowrap">{formatINR(totals.pendingAmount)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-sm overflow-hidden">
+              <h3 className="p-4 font-bold text-zinc-900 dark:text-zinc-50 border-b border-zinc-100 dark:border-zinc-800">School-wise Summary</h3>
+              <div className="overflow-x-auto max-h-80">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-zinc-50 dark:bg-zinc-900/50 text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400 sticky top-0">
+                    <tr><th className="p-3">School</th><th className="p-3 text-right">Coaches</th><th className="p-3 text-right">Students</th><th className="p-3 text-right">Fees</th><th className="p-3 text-right">Paid</th><th className="p-3 text-right">Pending</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800 text-zinc-800 dark:text-zinc-200">
+                    {schoolRows.map((s) => {
+                      const open = expandedSchools.has(s.schoolKey);
+                      return (
+                        <Fragment key={s.schoolKey}>
+                          <tr className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900/40" onClick={() => setExpandedSchools((p) => { const n = new Set(p); n.has(s.schoolKey) ? n.delete(s.schoolKey) : n.add(s.schoolKey); return n; })}>
+                            <td className="p-3 font-semibold"><span className="inline-flex items-center gap-1">{open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}{s.school}</span></td>
+                            <td className="p-3 text-right">{s.coaches}</td>
+                            <td className="p-3 text-right">{s.students}</td>
+                            <td className="p-3 text-right whitespace-nowrap">{formatINR(s.totalAmount)}</td>
+                            <td className="p-3 text-right whitespace-nowrap">{formatINR(s.paidAmount)}</td>
+                            <td className="p-3 text-right whitespace-nowrap">{formatINR(s.pendingAmount)}</td>
+                          </tr>
+                          {open && s.coachRows.map((c) => (
+                            <tr key={`${s.schoolKey}-${c.coachId}`} className="bg-zinc-50/70 dark:bg-zinc-900/30 text-xs">
+                              <td className="p-2 pl-9">{c.coach}</td>
+                              <td className="p-2"></td>
+                              <td className="p-2 text-right">{c.students}</td>
+                              <td className="p-2 text-right whitespace-nowrap">{formatINR(c.totalAmount)}</td>
+                              <td className="p-2 text-right whitespace-nowrap">{formatINR(c.paidAmount)}</td>
+                              <td className="p-2 text-right whitespace-nowrap">{formatINR(c.pendingAmount)}</td>
+                            </tr>
+                          ))}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Payment details */}
         <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-sm overflow-hidden">
-          {filteredPending.length > 0 && (
+          {pendingInView.length > 0 && (
             <div className="p-4 sm:p-5 border-b border-zinc-200 dark:border-zinc-800 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
               <button
                 onClick={toggleSelectAll}
                 className="flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-zinc-600 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap"
               >
                 {allPendingSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-                Select All Pending ({filteredPending.length})
+                Select All Pending ({pendingInView.length})
               </button>
               <button
                 onClick={handleBulkApprove}
@@ -353,126 +579,109 @@ export default function PaymentManagement() {
           )}
 
           {loading ? (
-            <div className="py-16 flex justify-center">
-              <RefreshCw className="w-8 h-8 animate-spin text-blue-500" />
-            </div>
-          ) : filtered.length === 0 ? (
+            <div className="py-16 flex justify-center"><RefreshCw className="w-8 h-8 animate-spin text-blue-500" /></div>
+          ) : sorted.length === 0 ? (
             <div className="p-12 text-center text-zinc-400">
-              {statusTab === "pending" && requests.length === 0 && !searchQuery && coachFilter === "all"
-                ? "No payment requests yet."
-                : statusTab === "pending" && !searchQuery && coachFilter === "all"
-                ? "All caught up — no pending payments."
-                : `No ${statusTab === "all" ? "" : statusTab + " "}payments match your filters.`}
+              {allRows.length === 0 ? "No registrations yet." : "No registrations match your filters."}
             </div>
           ) : (
             <>
-              {/* Desktop/tablet table */}
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left border-collapse text-sm">
                   <thead>
-                    <tr className="bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-200 dark:border-zinc-800 text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">
+                    <tr className="bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400">
                       <th className="p-3 w-10"></th>
-                      <th className="p-3">Student</th>
-                      <th className="p-3">Coach / School</th>
-                      <th className="p-3">Amount</th>
-                      <th className="p-3">Requested</th>
-                      <th className="p-3">Status</th>
-                      <th className="p-3 text-right">Action</th>
+                      <SortTh k="name">Student</SortTh>
+                      <th className="p-3 uppercase tracking-wider font-semibold">School / Coach</th>
+                      <th className="p-3 uppercase tracking-wider font-semibold">Exam / Belt</th>
+                      <SortTh k="fee" className="text-right">Fee</SortTh>
+                      <th className="p-3 uppercase tracking-wider font-semibold text-right">Paid</th>
+                      <th className="p-3 uppercase tracking-wider font-semibold text-right">Balance</th>
+                      <SortTh k="status">Status</SortTh>
+                      <SortTh k="date">Paid On / Ref</SortTh>
+                      <th className="p-3"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                    {visible.map((student) => {
-                      const done = isConfirmed(student);
-                      const pd = student.paymentDetails;
-                      return (
-                        <tr key={student.id} className="hover:bg-zinc-50/60 dark:hover:bg-zinc-900/40 transition-colors">
-                          <td className="p-3">
-                            {!done && (
-                              <button onClick={() => toggleSelect(student.id)} className="text-zinc-400 hover:text-blue-500">
-                                {selectedIds.has(student.id) ? <CheckSquare className="w-4 h-4 text-blue-500" /> : <Square className="w-4 h-4" />}
-                              </button>
-                            )}
-                          </td>
-                          <td className="p-3">
-                            <div className="font-bold text-zinc-900 dark:text-white">{(student.name || "").trim() || "Unnamed"}</div>
-                            <div className="text-xs text-zinc-500 font-mono">{student.id}</div>
-                            <div className="text-xs text-zinc-500">{beltLabel(student)}{student.standard ? ` · Std ${student.standard}` : ""}</div>
-                          </td>
-                          <td className="p-3">
-                            <div className="font-semibold text-zinc-800 dark:text-zinc-200">{coachOf(student) || "Individual"}</div>
-                            <div className="text-xs text-zinc-500">{student.school || "—"}</div>
-                          </td>
-                          <td className="p-3">
-                            <div className="font-semibold text-zinc-800 dark:text-zinc-200">{formatAmount(pd?.amount)}</div>
-                            {(pd?.method || pd?.transactionId) && (
-                              <div className="text-xs text-zinc-500">{[pd?.method, pd?.transactionId].filter(Boolean).join(" · ")}</div>
-                            )}
-                          </td>
-                          <td className="p-3 text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
-                            <div>{formatDateTime(pd?.paymentDate || student.registeredAt)}</div>
-                            {pd?.testDate && <div className="text-xs text-zinc-500">Test: {pd.testDate}{pd.testTime ? ` ${pd.testTime}` : ""}</div>}
-                          </td>
-                          <td className="p-3"><StatusBadge student={student} /></td>
-                          <td className="p-3 text-right">{!done && renderApproveButton(student)}</td>
-                        </tr>
-                      );
-                    })}
+                    {visible.map((r) => (
+                      <tr key={r.id} className="hover:bg-zinc-50/60 dark:hover:bg-zinc-900/40 transition-colors text-zinc-800 dark:text-zinc-200">
+                        <td className="p-3">
+                          {r.status === "pending" && (
+                            <button onClick={() => toggleSelect(r.id)} className="text-zinc-400 hover:text-blue-500">
+                              {selectedIds.has(r.id) ? <CheckSquare className="w-4 h-4 text-blue-500" /> : <Square className="w-4 h-4" />}
+                            </button>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <div className="font-bold text-zinc-900 dark:text-white">{r.name}</div>
+                          <div className="text-xs text-zinc-500 font-mono">{r.id}</div>
+                        </td>
+                        <td className="p-3">
+                          <div className="font-semibold">{r.school}</div>
+                          <div className="text-xs text-zinc-500">{r.coach}</div>
+                        </td>
+                        <td className="p-3">
+                          <div className="font-semibold">{r.program === "KARATE" ? "Karate" : "Silambam"} · {r.transitionLabel}</div>
+                          <div className="text-xs text-zinc-500">Current: {r.currentLevel}</div>
+                        </td>
+                        <td className="p-3 text-right whitespace-nowrap">{feeCell(r)}</td>
+                        <td className="p-3 text-right whitespace-nowrap">{formatINR(r.paid)}</td>
+                        <td className="p-3 text-right whitespace-nowrap">{formatINR(r.balance)}</td>
+                        <td className="p-3"><StatusBadge status={r.status} /></td>
+                        <td className="p-3 text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+                          <div>{formatDate(r.paymentDate)}</div>
+                          {(r.method || r.reference) && <div className="text-xs text-zinc-500">{[r.method, r.reference].filter(Boolean).join(" · ")}</div>}
+                        </td>
+                        <td className="p-3 text-right">{r.status === "pending" && renderApproveButton(r)}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
 
-              {/* Mobile card list */}
               <div className="md:hidden divide-y divide-zinc-100 dark:divide-zinc-800">
-                {visible.map((student) => {
-                  const done = isConfirmed(student);
-                  const pd = student.paymentDetails;
-                  return (
-                    <div key={student.id} className="p-4 flex flex-col gap-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-3 min-w-0">
-                          {!done && (
-                            <button onClick={() => toggleSelect(student.id)} className="text-zinc-400 hover:text-blue-500 mt-0.5 shrink-0">
-                              {selectedIds.has(student.id) ? <CheckSquare className="w-4 h-4 text-blue-500" /> : <Square className="w-4 h-4" />}
-                            </button>
-                          )}
-                          <div className="min-w-0">
-                            <div className="font-bold text-zinc-900 dark:text-white truncate">{(student.name || "").trim() || "Unnamed"}</div>
-                            <div className="text-xs text-zinc-500 font-mono truncate">{student.id}</div>
-                          </div>
-                        </div>
-                        <StatusBadge student={student} />
-                      </div>
-
-                      <div className="text-sm space-y-1.5">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5 min-w-0"><Users className="w-3.5 h-3.5 shrink-0" /><span className="truncate">{coachOf(student) || "Individual"} · {student.school || "—"}</span></span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-zinc-500 dark:text-zinc-400">{beltLabel(student)}</span>
-                          <span className="font-semibold text-zinc-800 dark:text-zinc-200">{formatAmount(pd?.amount)}</span>
-                        </div>
-                        <div className="text-xs text-zinc-500">
-                          {formatDateTime(pd?.paymentDate || student.registeredAt)}
-                          {(pd?.method || pd?.transactionId) && ` · ${[pd?.method, pd?.transactionId].filter(Boolean).join(" · ")}`}
+                {visible.map((r) => (
+                  <div key={r.id} className="p-4 flex flex-col gap-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3 min-w-0">
+                        {r.status === "pending" && (
+                          <button onClick={() => toggleSelect(r.id)} className="text-zinc-400 hover:text-blue-500 mt-0.5 shrink-0">
+                            {selectedIds.has(r.id) ? <CheckSquare className="w-4 h-4 text-blue-500" /> : <Square className="w-4 h-4" />}
+                          </button>
+                        )}
+                        <div className="min-w-0">
+                          <div className="font-bold text-zinc-900 dark:text-white truncate">{r.name}</div>
+                          <div className="text-xs text-zinc-500 font-mono truncate">{r.id}</div>
                         </div>
                       </div>
-
-                      {!done && renderApproveButton(student, true)}
+                      <StatusBadge status={r.status} />
                     </div>
-                  );
-                })}
+                    <div className="text-sm space-y-1.5 text-zinc-700 dark:text-zinc-300">
+                      <div className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400"><Users className="w-3.5 h-3.5 shrink-0" /><span className="truncate">{r.coach} · {r.school}</span></div>
+                      <div>{r.program === "KARATE" ? "Karate" : "Silambam"} · {r.transitionLabel}</div>
+                      <div className="flex justify-between"><span>Fee</span><span className="font-semibold">{feeCell(r)}</span></div>
+                      <div className="flex justify-between"><span>Paid</span><span className="font-semibold">{formatINR(r.paid)}</span></div>
+                      <div className="flex justify-between"><span>Balance</span><span className="font-semibold">{formatINR(r.balance)}</span></div>
+                      <div className="text-xs text-zinc-500">{formatDate(r.paymentDate)}{(r.method || r.reference) && ` · ${[r.method, r.reference].filter(Boolean).join(" · ")}`}</div>
+                    </div>
+                    {r.status === "pending" && renderApproveButton(r, true)}
+                  </div>
+                ))}
               </div>
 
-              {filtered.length > visibleCount && (
-                <div className="p-4 border-t border-zinc-100 dark:border-zinc-800 flex justify-center">
-                  <button
-                    onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
-                    className="px-4 py-2 text-xs font-bold text-zinc-600 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors"
-                  >
-                    Show more ({filtered.length - visibleCount} remaining)
-                  </button>
+              <div className="p-4 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+                <span>
+                  {page * pageSize + 1}–{Math.min(sorted.length, (page + 1) * pageSize)} of {sorted.length}
+                </span>
+                <div className="flex items-center gap-2">
+                  <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} className="px-2 py-1.5 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 rounded-lg" aria-label="Rows per page">
+                    {PAGE_SIZES.map((n) => <option key={n} value={n}>{n} / page</option>)}
+                  </select>
+                  <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg disabled:opacity-40">Prev</button>
+                  <span>Page {page + 1} / {pageCount}</span>
+                  <button onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))} disabled={page >= pageCount - 1} className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg disabled:opacity-40">Next</button>
                 </div>
-              )}
+              </div>
             </>
           )}
         </div>

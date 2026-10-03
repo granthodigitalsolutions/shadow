@@ -59,10 +59,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
  const allNavItems = [
  { path: `/admin/${program}/dashboard`, icon: LayoutDashboard, label: "Dashboard" },
- { path: `/admin/${program}/live-monitor`, icon: Activity, label: "Batch Monitor" },
+ { path: `/admin/${program}/live-monitor`, icon: Layers, label: "Batches" },
  { path: `/admin/${program}/schools`, icon: School, label: "Schools" },
  { path: `/admin/${program}/students`, icon: Users, label: "Students" },
- { path: `/admin/${program}/individual-batches`, icon: Layers, label: "Batches" },
  { path: `/admin/${program}/results`, icon: ClipboardList, label: "Results" },
  { path: `/admin/${program}/whatsapp-results`, icon: MessageCircle, label: "Send Results" },
  { path: `/admin/${program}/manage-belt-tests`, icon: Calendar, label: currentProgram === 'SELAMBAM' ? "Stage Tests" : "Belt Tests" },

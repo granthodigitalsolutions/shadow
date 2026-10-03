@@ -26,6 +26,8 @@ const handler = async (req, res) => {
       const now = new Date().toISOString();
       alloc = { ...alloc, examStartedAt: now, updatedAt: now };
       tx.update(allocRef, { examStartedAt: now, updatedAt: now });
+      // Lets the Admin batch monitor show "In Progress" without reading allocations.
+      if (!batchSnap.data().examStartedAt) tx.update(batchRef, { examStartedAt: now, updatedAt: now });
     }
     return { batch: batchSnap.data(), alloc };
   });

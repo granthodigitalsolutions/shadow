@@ -200,6 +200,7 @@ export const firebaseStudentService = {
   listenAll: (
     callback: (students: StudentRecord[]) => void,
     programType?: "KARATE" | "SELAMBAM",
+    onError?: (error: Error) => void,
   ) => {
     const q = query(collection(db, "students"));
     return onSnapshot(q, (snap) => {
@@ -219,7 +220,7 @@ export const firebaseStudentService = {
         });
       }
       callback(sortStudentsDesc(students));
-    });
+    }, (error) => onError?.(error));
   },
 
   listenByCoach: (
@@ -953,6 +954,7 @@ export const firebaseBatchService = {
   listenAll: (
     callback: (batches: Batch[]) => void,
     programType?: "KARATE" | "SELAMBAM",
+    onError?: (error: Error) => void,
   ) => {
     const q = query(collection(db, "batches"));
     return onSnapshot(q, (snap) => {
@@ -965,7 +967,7 @@ export const firebaseBatchService = {
         );
       }
       callback(allBatches);
-    });
+    }, (error) => onError?.(error));
   },
 
   getByBeltTest: async (
