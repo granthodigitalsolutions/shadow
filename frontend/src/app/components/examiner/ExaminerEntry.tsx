@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { QrCode, Camera, Upload, X, ShieldCheck, ArrowRight } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
 import jsQR from "jsqr";
-import { verifyExaminerCode } from "../../services/examinerApi";
+import { verifyExaminerCode, recoverExaminerSession, loadRecoveryHint, saveRecoveryHint, clearRecoveryHint } from "../../services/examinerApi";
 import { ThemeToggle } from "../ui/ThemeToggle";
 
 const CODE_LENGTH = 6;
@@ -76,6 +76,33 @@ export default function ExaminerEntry() {
       if (data.success && data.token && data.batch) {
         localStorage.setItem("examinerToken", data.token);
         localStorage.setItem("examinerBatch", JSON.stringify(data.batch));
+
+        // Returning examiner: ask the server to re-attach this new session to
+        // the allocation they already hold. The saved hint is only a lookup
+        // aid - the backend validates it. Never fall through to the roster
+        // (where slots could be reserved again) if that check could not run.
+        const hint = loadRecoveryHint(data.batch);
+        if (hint) {
+          try {
+            const rec = await recoverExaminerSession({ allocationId: hint.allocationId, recoveryKey: hint.recoveryKey });
+            if (rec.status === 401 || !rec.ok || !rec.data.success) {
+              throw new Error(rec.data?.message || "recovery failed");
+            }
+            if (rec.data.result === "recovered" && rec.data.token) {
+              localStorage.setItem("examinerToken", rec.data.token);
+              if (rec.data.recoveryKey && rec.data.allocationId) {
+                saveRecoveryHint(data.batch, rec.data.allocationId, rec.data.recoveryKey);
+              }
+            } else if (rec.data.result === "invalid") {
+              clearRecoveryHint(data.batch.id); // stale hint - the roster offers recovery by name
+            }
+          } catch {
+            localStorage.removeItem("examinerToken");
+            localStorage.removeItem("examinerBatch");
+            setErrorMsg("Couldn't restore your previous session. Check your connection and try again.");
+            return;
+          }
+        }
         navigate("/examiner/batch");
       } else {
         setErrorMsg(data.message || "That code wasn't found. Please check and try again.");

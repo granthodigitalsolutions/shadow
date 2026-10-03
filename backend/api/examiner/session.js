@@ -12,6 +12,7 @@ const actions = {
   allocate: require('../../src/handlers/examiner-allocate').handler,
   'remove-student': require('../../src/handlers/examiner-remove-student').handler,
   'start-exam': require('../../src/handlers/examiner-start-exam').handler,
+  recover: require('../../src/handlers/examiner-recover').handler,
 };
 
 const dispatch = (req, res) => {

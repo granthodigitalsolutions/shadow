@@ -6,7 +6,7 @@
       "destination": "/api/index.js"
     },
     {
-      "source": "/api/examiner/:action(allocate|remove-student|start-exam)",
+      "source": "/api/examiner/:action(allocate|remove-student|start-exam|recover)",
       "destination": "/api/examiner/session?action=:action"
     }
   ]

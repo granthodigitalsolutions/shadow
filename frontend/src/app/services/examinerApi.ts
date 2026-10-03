@@ -73,6 +73,8 @@ export interface ExaminerStudentsResponse {
 export interface AllocateSlotsResponse {
   success: boolean;
   replayed?: boolean;
+  /** Present only when a recovery key was just issued - saved as a local hint. */
+  recovery?: { allocationId: string; recoveryKey: string } | null;
   capacity?: ExaminerCapacity;
   message?: string;
 }
@@ -197,10 +199,81 @@ export async function submitExaminerScore(
 export async function allocateExaminerSlots(
   quantity: number,
   requestId: string,
+  examinerName?: string,
 ): Promise<{ ok: boolean; status: number; data: AllocateSlotsResponse }> {
   return examinerFetch<AllocateSlotsResponse>("/allocate", {
     method: "POST",
-    body: JSON.stringify({ quantity, requestId }),
+    body: JSON.stringify({ quantity, requestId, examinerName }),
+  });
+}
+
+// -- Session recovery ---------------------------------------------------------
+// Local Storage only holds a *hint* (allocation id + a random per-allocation
+// recovery key) per batch. The backend decides whether it is valid; clearing
+// it never releases anything - the allocation stays on the server and can be
+// found again by the name used when reserving.
+export interface RecoveryHint {
+  batchId: string;
+  schoolId: string;
+  allocationId: string;
+  recoveryKey: string;
+}
+
+const recoveryStorageKey = (batchId: string) => `examinerRecovery:v1:${batchId}`;
+
+export function loadRecoveryHint(batch: { id: string; schoolId: string }): RecoveryHint | null {
+  try {
+    const raw = localStorage.getItem(recoveryStorageKey(batch.id));
+    if (!raw) return null;
+    const h = JSON.parse(raw);
+    // Never reuse a hint across batches/schools, and ignore anything malformed.
+    if (
+      h && typeof h.allocationId === "string" && typeof h.recoveryKey === "string" &&
+      h.batchId === batch.id && h.schoolId === batch.schoolId
+    ) {
+      return h as RecoveryHint;
+    }
+  } catch {
+    /* corrupted - treated as missing */
+  }
+  return null;
+}
+
+export function saveRecoveryHint(batch: { id: string; schoolId: string }, allocationId: string, recoveryKey: string) {
+  try {
+    const hint: RecoveryHint = { batchId: batch.id, schoolId: batch.schoolId, allocationId, recoveryKey };
+    localStorage.setItem(recoveryStorageKey(batch.id), JSON.stringify(hint));
+  } catch {
+    /* storage unavailable - recovery by name still works */
+  }
+}
+
+export function clearRecoveryHint(batchId: string) {
+  try {
+    localStorage.removeItem(recoveryStorageKey(batchId));
+  } catch {
+    /* ignore */
+  }
+}
+
+export interface RecoverResponse {
+  success: boolean;
+  result?: "recovered" | "invalid" | "no_allocation" | "capacity_exhausted";
+  token?: string;
+  allocationId?: string;
+  recoveryKey?: string | null;
+  capacity?: ExaminerCapacity;
+  message?: string;
+}
+
+export async function recoverExaminerSession(payload: {
+  allocationId?: string;
+  recoveryKey?: string;
+  examinerName?: string;
+}): Promise<{ ok: boolean; status: number; data: RecoverResponse }> {
+  return examinerFetch<RecoverResponse>("/recover", {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 

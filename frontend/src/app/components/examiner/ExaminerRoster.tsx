@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Users, LogOut, ArrowRight, Loader2, AlertCircle, ClipboardList, Camera, CheckCircle2, X, QrCode, UserPlus, Trash2 } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
-import { getExaminerStudents, scanExaminerStudent, allocateExaminerSlots, removeExaminerStudent, startExaminerExam, ExaminerBatch, ExaminerStudent, ExaminerCapacity } from "../../services/examinerApi";
+import { getExaminerStudents, scanExaminerStudent, allocateExaminerSlots, removeExaminerStudent, startExaminerExam, recoverExaminerSession, loadRecoveryHint, saveRecoveryHint, ExaminerBatch, ExaminerStudent, ExaminerCapacity } from "../../services/examinerApi";
 import { formatBatchName } from "../../utils/batchFormatters";
 import { ThemeToggle } from "../ui/ThemeToggle";
 import { playSuccessBeep, unlockScanBeep } from "../../utils/scanBeep";
@@ -33,6 +33,10 @@ export default function ExaminerRoster() {
   // -- Slot allocation (server is the source of truth; restored on every load) --
   const [capacityInfo, setCapacityInfo] = useState<ExaminerCapacity | null>(null);
   const [allocQty, setAllocQty] = useState("");
+  const [allocName, setAllocName] = useState("");
+  const [recoverOpen, setRecoverOpen] = useState(false);
+  const [recoverName, setRecoverName] = useState("");
+  const [recoverBusy, setRecoverBusy] = useState(false);
   const [allocBusy, setAllocBusy] = useState(false);
   const [allocFeedback, setAllocFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
   // One id per user action, reused if the same action is retried after a
@@ -81,6 +85,17 @@ export default function ExaminerRoster() {
       if (data.batch) {
         setBatch(data.batch);
         localStorage.setItem("examinerBatch", JSON.stringify(data.batch));
+        // Slots reserved before recovery existed (or after a cleared browser):
+        // have the server issue a key once so later visits restore them.
+        if (data.capacity && data.capacity.mine.quantity > 0 && !loadRecoveryHint(data.batch)) {
+          recoverExaminerSession({})
+            .then(({ data: rec }) => {
+              if (rec.result === "recovered" && rec.recoveryKey && rec.allocationId) {
+                saveRecoveryHint(data.batch!, rec.allocationId, rec.recoveryKey);
+              }
+            })
+            .catch(() => {});
+        }
       }
     } catch (e: any) {
       setError(e?.message || "Could not reach the server. Check your connection and try again.");
@@ -93,6 +108,40 @@ export default function ExaminerRoster() {
   const capacity = batch?.maxSize ?? students.length;
   // Students can only be added into this examiner's own reserved slots.
   const slotsFull = !capacityInfo || capacityInfo.mine.remaining <= 0;
+
+  // Found an earlier allocation by the name used when reserving (e.g. after
+  // the browser's saved data was cleared). The backend re-binds this session.
+  const handleRecoverByName = async () => {
+    const name = recoverName.trim();
+    if (recoverBusy || name.length < 2) return;
+    setRecoverBusy(true);
+    setAllocFeedback(null);
+    try {
+      const { status, data } = await recoverExaminerSession({ examinerName: name });
+      if (status === 401) {
+        navigate("/examiner", { replace: true });
+        return;
+      }
+      if (!data.success) {
+        setAllocFeedback({ type: "error", message: data.message || "Could not check for earlier slots. Please try again." });
+        return;
+      }
+      if (data.result === "recovered" && data.token) {
+        localStorage.setItem("examinerToken", data.token);
+        if (batch && data.allocationId && data.recoveryKey) saveRecoveryHint(batch, data.allocationId, data.recoveryKey);
+        setRecoverOpen(false);
+        setRecoverName("");
+        await fetchRoster(true);
+        setAllocFeedback({ type: "success", message: "Your earlier slots and students are restored." });
+      } else {
+        setAllocFeedback({ type: "error", message: "No earlier slots were found under that name for this batch." });
+      }
+    } catch (e: any) {
+      setAllocFeedback({ type: "error", message: e?.message || "Could not reach the server. Check your connection and try again." });
+    } finally {
+      setRecoverBusy(false);
+    }
+  };
 
   const handleAllocate = async () => {
     if (allocBusy || !capacityInfo) return;
@@ -111,13 +160,19 @@ export default function ExaminerRoster() {
       });
       return;
     }
+    const needsName = capacityInfo.mine.quantity === 0;
+    const name = allocName.trim().replace(/\s+/g, " ");
+    if (needsName && name.length < 2) {
+      setAllocFeedback({ type: "error", message: "Enter your name first - it lets you recover your slots if you come back later." });
+      return;
+    }
     if (!allocRequestRef.current || allocRequestRef.current.qty !== qty) {
       allocRequestRef.current = { qty, id: crypto.randomUUID() };
     }
     setAllocBusy(true);
     setAllocFeedback(null);
     try {
-      const { status, data } = await allocateExaminerSlots(qty, allocRequestRef.current.id);
+      const { status, data } = await allocateExaminerSlots(qty, allocRequestRef.current.id, needsName ? name : undefined);
       if (status === 401) {
         navigate("/examiner", { replace: true });
         return;
@@ -132,6 +187,7 @@ export default function ExaminerRoster() {
         return;
       }
       setCapacityInfo(data.capacity);
+      if (data.recovery && batch) saveRecoveryHint(batch, data.recovery.allocationId, data.recovery.recoveryKey);
       setAllocQty("");
       setAllocFeedback({
         type: "success",
@@ -480,6 +536,28 @@ export default function ExaminerRoster() {
               </div>
             )}
 
+            {capacityInfo.mine.quantity === 0 && (
+              <div>
+                <label htmlFor="alloc-name" className="block text-xs font-bold text-zinc-600 dark:text-zinc-300 uppercase tracking-wider mb-2">
+                  Your name
+                </label>
+                <input
+                  id="alloc-name"
+                  type="text"
+                  maxLength={60}
+                  autoComplete="name"
+                  value={allocName}
+                  disabled={allocBusy}
+                  onChange={(e) => {
+                    setAllocName(e.target.value);
+                    setAllocFeedback(null);
+                  }}
+                  placeholder="Used to recover your slots later"
+                  className="w-full px-4 py-3 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 placeholder-zinc-400 dark:placeholder-zinc-500 caret-blue-500 border-2 border-zinc-300 dark:border-zinc-600 rounded-xl text-base font-semibold focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 disabled:opacity-50"
+                />
+              </div>
+            )}
+
             <div>
               <label htmlFor="alloc-qty" className="block text-xs font-bold text-zinc-600 dark:text-zinc-300 uppercase tracking-wider mb-2">
                 Number of students you will take
@@ -512,6 +590,42 @@ export default function ExaminerRoster() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Recover earlier slots (only before this session has any) */}
+        {capacityInfo && capacityInfo.mine.quantity === 0 && (
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-sm p-5 space-y-3">
+            <button
+              type="button"
+              onClick={() => setRecoverOpen((o) => !o)}
+              className="w-full text-left text-sm font-bold text-blue-600 dark:text-blue-400"
+            >
+              {capacityInfo.available === 0 ? "No slots left - already reserved some? " : "Already reserved slots earlier? "}
+              {recoverOpen ? "Hide" : "Recover my slots"}
+            </button>
+            {recoverOpen && (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  maxLength={60}
+                  value={recoverName}
+                  disabled={recoverBusy}
+                  onChange={(e) => setRecoverName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleRecoverByName()}
+                  placeholder="Name you used when reserving"
+                  className="flex-1 min-w-0 px-4 py-3 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 placeholder-zinc-400 dark:placeholder-zinc-500 border-2 border-zinc-300 dark:border-zinc-600 rounded-xl text-sm font-semibold focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 disabled:opacity-50"
+                />
+                <button
+                  onClick={handleRecoverByName}
+                  disabled={recoverBusy || recoverName.trim().length < 2}
+                  className="flex-shrink-0 flex items-center justify-center gap-2 px-4 py-3 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-xl font-bold text-sm disabled:opacity-40 active:scale-95 transition-all"
+                >
+                  {recoverBusy && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Recover
+                </button>
+              </div>
+            )}
           </div>
         )}
 

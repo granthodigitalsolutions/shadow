@@ -2,6 +2,7 @@ const { getExaminer } = require('../middleware/verifyExaminerToken');
 const { db } = require('../config/firebase');
 const { ValidationError, NotFoundError, ConflictError } = require('../utils/errors');
 const { allocationsRef, buildCapacityView } = require('../utils/examinerBatch');
+const { newRecoveryKey, hashKey, normalizeName } = require('../utils/examinerRecovery');
 const logger = require('../utils/logger');
 
 const MAX_REMEMBERED_REQUESTS = 50;
@@ -19,7 +20,7 @@ const handler = async (req, res) => {
   }
 
   const { batchId, examinerId } = getExaminer(req);
-  const { quantity, requestId } = req.body || {};
+  const { quantity, requestId, examinerName } = req.body || {};
 
   const qty = typeof quantity === 'string' && /^\d+$/.test(quantity.trim()) ? Number(quantity) : quantity;
   if (typeof qty !== 'number' || !Number.isInteger(qty) || qty < 1) {
@@ -31,6 +32,8 @@ const handler = async (req, res) => {
 
   const batchRef = db.collection('batches').doc(batchId);
   const allocRef = allocationsRef(batchId).doc(examinerId);
+  const nameKey = normalizeName(examinerName);
+  const displayName = typeof examinerName === 'string' ? examinerName.trim().replace(/\s+/g, ' ') : '';
 
   const result = await db.runTransaction(async (tx) => {
     const [batchSnap, allocSnap] = await Promise.all([tx.get(batchRef), tx.get(allocRef)]);
@@ -40,9 +43,26 @@ const handler = async (req, res) => {
     const existing = allocSnap.exists ? allocSnap.data() : null;
     const requestIds = existing && Array.isArray(existing.requestIds) ? existing.requestIds : [];
 
-    // Retry of an already-committed request: report current state, change nothing.
+    // Retry of an already-committed request: no slots change. If the first
+    // reply was lost, the retrying session gets a fresh recovery key.
     if (requestIds.includes(requestId)) {
-      return { batch, alloc: existing, replayed: true };
+      const key = newRecoveryKey();
+      tx.update(allocRef, { recoveryHash: hashKey(key) });
+      return { batch, alloc: { ...existing, recoveryHash: hashKey(key) }, replayed: true, recoveryKey: key };
+    }
+
+    // A first allocation must carry the examiner's name (used to find it again
+    // if the browser's saved reference is lost) and the name must be free.
+    let recoveryKey = null;
+    if (!existing) {
+      if (nameKey.length < 2 || displayName.length > 60) {
+        throw new ValidationError('Enter your name (2-60 characters) so you can recover your slots later.');
+      }
+      const clash = await tx.get(allocationsRef(batchId).where('nameKey', '==', nameKey).limit(1));
+      if (!clash.empty) {
+        throw new ConflictError('That name already has slots in this batch. If that is you, use "Recover my slots" instead.');
+      }
+      recoveryKey = newRecoveryKey();
     }
 
     const { available } = buildCapacityView(batch, existing);
@@ -56,6 +76,8 @@ const handler = async (req, res) => {
 
     const now = new Date().toISOString();
     const nextAlloc = {
+      ...(existing || {}),
+      ...(existing ? {} : { examinerName: displayName, nameKey, recoveryHash: hashKey(recoveryKey) }),
       examinerId,
       batchId,
       quantity: ((existing && existing.quantity) || 0) + qty,
@@ -70,7 +92,7 @@ const handler = async (req, res) => {
     tx.set(allocRef, nextAlloc);
     tx.update(batchRef, { allocatedCount: nextBatch.allocatedCount, updatedAt: now });
 
-    return { batch: nextBatch, alloc: nextAlloc, replayed: false };
+    return { batch: nextBatch, alloc: nextAlloc, replayed: false, recoveryKey };
   });
 
   logger.info('Examiner allocated batch slots', {
@@ -84,6 +106,8 @@ const handler = async (req, res) => {
   res.status(200).json({
     success: true,
     replayed: result.replayed,
+    // Only present when a key was just issued - the browser stores it as a hint.
+    recovery: result.recoveryKey ? { allocationId: examinerId, recoveryKey: result.recoveryKey } : null,
     capacity: buildCapacityView(result.batch, result.alloc),
   });
 };
