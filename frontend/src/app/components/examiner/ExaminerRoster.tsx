@@ -6,7 +6,6 @@ import { getExaminerStudents, scanExaminerStudent, allocateExaminerSlots, Examin
 import { formatBatchName } from "../../utils/batchFormatters";
 import { ThemeToggle } from "../ui/ThemeToggle";
 
-const PRESET_COUNTS = [5, 10, 20, 50];
 // Ignore an identical re-decode of a QR still sitting in frame — the scan
 // itself is already duplicate-safe server-side, this just avoids spamming
 // the network with the same value every ~100ms while it's in view.
@@ -39,9 +38,6 @@ export default function ExaminerRoster() {
   // network failure so the server applies it at most once.
   const allocRequestRef = useRef<{ qty: number; id: string } | null>(null);
 
-  const [selectedCount, setSelectedCount] = useState<number | null>(null);
-  const [customMode, setCustomMode] = useState(false);
-  const [customCount, setCustomCount] = useState("");
   const [starting, setStarting] = useState(false);
 
   // ── Scan-to-assign state ──────────────────────────────────────────────────
@@ -272,14 +268,12 @@ export default function ExaminerRoster() {
 
   // ── Start scoring (unchanged) ────────────────────────────────────────────
 
-  const effectiveCount = customMode
-    ? Math.max(0, parseInt(customCount, 10) || 0)
-    : selectedCount || 0;
-
+  // The examiner's own assigned students are the source of truth: scoring
+  // runs over every one of them that is still pending - no second count prompt.
   const handleStart = () => {
-    if (effectiveCount <= 0 || pendingStudents.length === 0) return;
+    if (pendingStudents.length === 0) return;
     setStarting(true);
-    const queue = pendingStudents.slice(0, effectiveCount).map((s) => s.id);
+    const queue = pendingStudents.map((s) => s.id);
     localStorage.setItem("examinerSessionQueue", JSON.stringify(queue));
     localStorage.setItem("examinerSessionIndex", "0");
     navigate("/examiner/score");
@@ -572,6 +566,16 @@ export default function ExaminerRoster() {
               <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">
                 Added This Session ({students.length})
               </p>
+              {pendingStudents.length > 0 && (
+                <button
+                  onClick={handleStart}
+                  disabled={starting}
+                  className="w-full mb-3 px-6 py-4 bg-blue-500 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-lg active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+                >
+                  Start Examination ({pendingStudents.length})
+                  <ArrowRight className="w-5 h-5" />
+                </button>
+              )}
               <div className="space-y-2 max-h-64 overflow-y-auto">
                 {students.map((s) => {
                   const belt = s.beltLevel || (s.stageLevel != null ? `Stage ${s.stageLevel}` : "—");
@@ -602,7 +606,7 @@ export default function ExaminerRoster() {
           )}
         </div>
 
-        {pendingStudents.length === 0 ? (
+        {pendingStudents.length === 0 && (
           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-10 text-center shadow-sm">
             <Users className="w-12 h-12 text-zinc-300 dark:text-zinc-700 mx-auto mb-4" />
             <p className="font-bold text-zinc-700 dark:text-zinc-300 text-lg mb-1">No Students Ready Yet</p>
@@ -611,77 +615,6 @@ export default function ExaminerRoster() {
                 ? "Scan or add a student above to get started."
                 : "Every student added so far has already been scored."}
             </p>
-          </div>
-        ) : (
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-sm p-6 space-y-5">
-            <div>
-              <h2 className="font-bold text-lg text-zinc-900 dark:text-zinc-50 mb-1">
-                How many students will you examine now?
-              </h2>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                {pendingStudents.length} student{pendingStudents.length === 1 ? "" : "s"} ready and waiting.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {PRESET_COUNTS.map((count) => {
-                const isSelected = !customMode && selectedCount === count;
-                const disabled = pendingStudents.length === 0;
-                return (
-                  <button
-                    key={count}
-                    disabled={disabled}
-                    onClick={() => {
-                      setCustomMode(false);
-                      setSelectedCount(count);
-                    }}
-                    className={`px-4 py-5 rounded-2xl font-bold text-xl transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${
-                      isSelected
-                        ? "bg-blue-500 text-white shadow-md shadow-blue-500/20"
-                        : "bg-zinc-50 dark:bg-zinc-950 border-2 border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:border-blue-300"
-                    }`}
-                  >
-                    {count}
-                  </button>
-                );
-              })}
-            </div>
-
-            <button
-              onClick={() => {
-                setCustomMode(true);
-                setSelectedCount(null);
-              }}
-              className={`w-full flex items-center gap-3 px-4 py-4 rounded-2xl border-2 transition-all ${
-                customMode
-                  ? "border-blue-500 bg-blue-50 dark:bg-blue-900/10"
-                  : "border-zinc-200 dark:border-zinc-800 hover:border-blue-300"
-              }`}
-            >
-              <span className="text-sm font-bold text-zinc-700 dark:text-zinc-300 flex-shrink-0">Custom:</span>
-              <input
-                type="number"
-                inputMode="numeric"
-                min={1}
-                placeholder="Enter a number"
-                value={customCount}
-                onFocus={() => {
-                  setCustomMode(true);
-                  setSelectedCount(null);
-                }}
-                onChange={(e) => setCustomCount(e.target.value.replace(/[^0-9]/g, ""))}
-                className="flex-1 min-w-0 px-3 py-2 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 placeholder-zinc-400 dark:placeholder-zinc-500 border border-zinc-300 dark:border-zinc-600 rounded-xl text-lg font-bold text-center focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-              />
-            </button>
-
-            <button
-              onClick={handleStart}
-              disabled={starting || effectiveCount <= 0}
-              className="w-full px-6 py-4 bg-blue-500 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-lg active:scale-[0.98] transition-all flex items-center justify-center gap-2"
-            >
-              Start Scoring{effectiveCount > 0 ? ` (${Math.min(effectiveCount, pendingStudents.length)})` : ""}
-              <ArrowRight className="w-5 h-5" />
-            </button>
           </div>
         )}
       </div>
