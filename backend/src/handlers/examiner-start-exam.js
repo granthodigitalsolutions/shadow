@@ -1,9 +1,7 @@
-const { allowCors } = require('../../src/middleware/withCors');
-const { withErrorHandler } = require('../../src/middleware/withErrorHandler');
-const { verifyExaminerToken, getExaminer } = require('../../src/middleware/verifyExaminerToken');
-const { db } = require('../../src/config/firebase');
-const { ConflictError, NotFoundError } = require('../../src/utils/errors');
-const { allocationsRef, buildCapacityView } = require('../../src/utils/examinerBatch');
+const { getExaminer } = require('../middleware/verifyExaminerToken');
+const { db } = require('../config/firebase');
+const { ConflictError, NotFoundError } = require('../utils/errors');
+const { allocationsRef, buildCapacityView } = require('../utils/examinerBatch');
 
 // Marks the authenticated examiner's session as started. From then on the
 // backend refuses to remove their students (see remove-student.js). Idempotent:
@@ -35,4 +33,4 @@ const handler = async (req, res) => {
   res.status(200).json({ success: true, capacity: buildCapacityView(result.batch, result.alloc) });
 };
 
-module.exports = allowCors(withErrorHandler(verifyExaminerToken(handler)));
+module.exports = { handler };

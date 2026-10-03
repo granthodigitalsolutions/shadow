@@ -1,10 +1,8 @@
-const { allowCors } = require('../../src/middleware/withCors');
-const { withErrorHandler } = require('../../src/middleware/withErrorHandler');
-const { verifyExaminerToken, getExaminer } = require('../../src/middleware/verifyExaminerToken');
-const { db } = require('../../src/config/firebase');
-const { ValidationError, NotFoundError, ConflictError } = require('../../src/utils/errors');
-const { allocationsRef, buildCapacityView } = require('../../src/utils/examinerBatch');
-const logger = require('../../src/utils/logger');
+const { getExaminer } = require('../middleware/verifyExaminerToken');
+const { db } = require('../config/firebase');
+const { ValidationError, NotFoundError, ConflictError } = require('../utils/errors');
+const { allocationsRef, buildCapacityView } = require('../utils/examinerBatch');
+const logger = require('../utils/logger');
 
 const MAX_REMEMBERED_REQUESTS = 50;
 
@@ -90,4 +88,4 @@ const handler = async (req, res) => {
   });
 };
 
-module.exports = allowCors(withErrorHandler(verifyExaminerToken(handler)));
+module.exports = { handler };

@@ -1,10 +1,8 @@
-const { allowCors } = require('../../src/middleware/withCors');
-const { withErrorHandler } = require('../../src/middleware/withErrorHandler');
-const { verifyExaminerToken, getExaminer } = require('../../src/middleware/verifyExaminerToken');
-const { db } = require('../../src/config/firebase');
-const { ValidationError, NotFoundError, ForbiddenError, ConflictError } = require('../../src/utils/errors');
-const { allocationsRef, buildCapacityView } = require('../../src/utils/examinerBatch');
-const logger = require('../../src/utils/logger');
+const { getExaminer } = require('../middleware/verifyExaminerToken');
+const { db } = require('../config/firebase');
+const { ValidationError, NotFoundError, ForbiddenError, ConflictError } = require('../utils/errors');
+const { allocationsRef, buildCapacityView } = require('../utils/examinerBatch');
+const logger = require('../utils/logger');
 
 // Un-assigns a mistakenly added student from the authenticated examiner's own
 // session, before the examination has started. The student's permanent record
@@ -86,4 +84,4 @@ const handler = async (req, res) => {
   res.status(200).json({ success: true, studentId, capacity: buildCapacityView(result.batch, result.alloc) });
 };
 
-module.exports = allowCors(withErrorHandler(verifyExaminerToken(handler)));
+module.exports = { handler };

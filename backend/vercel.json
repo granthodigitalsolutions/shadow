@@ -4,6 +4,10 @@
     {
       "source": "/",
       "destination": "/api/index.js"
+    },
+    {
+      "source": "/api/examiner/:action(allocate|remove-student|start-exam)",
+      "destination": "/api/examiner/session?action=:action"
     }
   ]
 }
