@@ -280,7 +280,7 @@ export default function AdminAuthSettings() {
           <p>Global Version: {config.version}</p>
           <p>Last modified by {config.globalUpdatedBy.name} on {new Date(config.globalUpdatedAt).toLocaleString()}</p>
         </div>
-
+ 
       </div>
     </AdminLayout>
   );

@@ -411,10 +411,13 @@ export default function BatchManagement() {
  }
  };
 
- // Belt/Stage of a batch, read off its enrolled students (batches don't store it).
- const getBatchBeltLabel = (batchId: string) => {
+ // Belt/Stage of a batch. Newer batches store this directly (set at
+ // generation time, before any student is assigned). Older batches don't
+ // have it — fall back to reading it off whichever students got enrolled.
+ const getBatchBeltLabel = (batch: Batch) => {
+ if (batch.belt) return batch.belt;
  const labels = new Set<string>();
- (batchStudents[batchId] || []).forEach((s) => {
+ (batchStudents[batch.id] || []).forEach((s) => {
  const label = s.beltLevel || (s.stageLevel != null ? `Stage ${s.stageLevel}` : "");
  if (label) labels.add(label);
  });
@@ -573,7 +576,7 @@ export default function BatchManagement() {
  <div className="flex justify-between items-start mb-4">
  <div>
  <h3 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50" style={{ fontFamily: "'Bebas Neue', sans-serif" }}>{formatBatchName(batch).toUpperCase()}</h3>
- <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider">{getBeltTestName(batch)}{getBatchBeltLabel(batch.id) ? ` · ${getBatchBeltLabel(batch.id)}` : ""}</p>
+ <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider">{getBeltTestName(batch)}{getBatchBeltLabel(batch) ? ` · ${getBatchBeltLabel(batch)}` : ""}</p>
  </div>
  <button onClick={() => handleDeleteBatch(batch.id)} className="p-2 bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-lg text-red-500 hover:bg-red-50 hover:border-red-200 disabled:opacity-30 disabled:cursor-not-allowed transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 absolute top-4 right-4 z-10"><Trash2 className="w-4 h-4"/></button>
  </div>
@@ -702,8 +705,8 @@ export default function BatchManagement() {
  <div className="p-6 space-y-4">
  <p className="text-sm text-zinc-500 dark:text-zinc-400 font-medium">
  {generateMode === "all"
- ? "Creates one batch for every Belt / Stage that currently has eligible students in the selected Belt Test - each with its own batch code and QR code. Belts / Stages with no eligible students are skipped."
- : "Instantly creates one new batch pre-populated with every currently-eligible student for the selected Belt Test and Belt, along with a unique batch code and QR code."}
+ ? "Creates one batch of empty badge slots for every Belt / Stage that currently has eligible students in the selected Belt Test - each with its own batch code and QR code. Students are assigned as the examiner scans them in on the day. Belts / Stages with no eligible students are skipped."
+ : "Instantly creates one new batch of empty badge slots, sized to the number of currently-eligible students for the selected Belt Test and Belt, along with a unique batch code and QR code. Students are assigned one at a time as the examiner scans them in."}
  </p>
  <div>
  <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Belt / Stage Test *</label>
@@ -792,7 +795,7 @@ export default function BatchManagement() {
  <QRCodeSVG value={batch.code || ""} size={48} style={{ width: '48px', height: '48px' }} level="M" includeMargin={false} />
  </div>
  <div className="flex-1 min-w-0">
- <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider truncate">{belt} &middot; {batch.studentIds.length} student{batch.studentIds.length === 1 ? '' : 's'}</p>
+ <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider truncate">{belt} &middot; {batch.maxSize} slot{batch.maxSize === 1 ? '' : 's'}</p>
  <p className="text-lg font-bold text-indigo-900 tracking-widest">{batch.code}</p>
  </div>
  <button onClick={() => handleCopyBatchCode(batch.code)} className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-800 px-3 py-1.5 bg-white rounded-lg border border-indigo-200 whitespace-nowrap">
@@ -832,7 +835,7 @@ export default function BatchManagement() {
  <p className="text-3xl font-bold text-indigo-700 tracking-[0.2em]">{generatedResult.code}</p>
  </div>
  <p className="text-sm text-zinc-500 dark:text-zinc-400 font-medium">
- {generatedResult.studentIds.length} student{generatedResult.studentIds.length === 1 ? '' : 's'} enrolled in this batch.
+ {generatedResult.maxSize} badge slot{generatedResult.maxSize === 1 ? '' : 's'} ready. Students are added as the examiner scans them in.
  </p>
  <div className="flex flex-wrap items-center justify-center gap-2">
  <button onClick={() => handleCopyBatchCode(generatedResult.code)} className="flex items-center gap-2 text-sm font-bold text-indigo-600 hover:text-indigo-800 px-4 py-2 bg-indigo-50 rounded-lg border border-indigo-200">

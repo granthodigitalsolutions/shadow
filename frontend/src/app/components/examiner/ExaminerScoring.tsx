@@ -201,6 +201,15 @@ export default function ExaminerScoring() {
   const [scores, setScores] = useState<{ [key: string]: number }>(defaults.scores);
   const [lessonNumbers, setLessonNumbers] = useState<{ [key: string]: number | "" }>(defaults.lessonNumbers);
 
+  // Live pass %/grade for the header — recomputed from whatever Technical/
+  // Athletic scores are currently on the sliders, so they move as the
+  // examiner drags/fine-tunes them instead of only updating after Submit.
+  const liveMaxScore = technicalMax + athleticMax;
+  const liveTotalScore = (scores["technical"] ?? 0) + ((scores as any)["athletic"] ?? (scores as any)["athletics"] ?? 0);
+  const livePercentage = liveMaxScore > 0 ? Math.round((liveTotalScore / liveMaxScore) * 100) : 0;
+  const liveGrade = getGrade(livePercentage);
+  const liveWouldPass = livePercentage >= passPercentage;
+
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submissionResult, setSubmissionResult] = useState<SubmissionResult>(null);
@@ -495,12 +504,16 @@ export default function ExaminerScoring() {
           </p>
           <div className="flex items-center gap-5 mt-3">
             <div className="flex items-baseline gap-1.5">
-              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pass</span>
-              <span className="text-sm font-bold text-emerald-400">{passPercentage}%</span>
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Score</span>
+              <span className={`text-sm font-bold ${liveWouldPass ? "text-emerald-400" : "text-red-400"}`}>{livePercentage}%</span>
             </div>
             <div className="flex items-baseline gap-1.5">
               <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Grade</span>
-              <span className="text-sm font-bold text-blue-400">{getGrade(passPercentage)}</span>
+              <span className="text-sm font-bold text-blue-400">{liveGrade}</span>
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Needs</span>
+              <span className="text-sm font-bold text-zinc-400">{passPercentage}%</span>
             </div>
           </div>
           <div className="w-full bg-zinc-800 rounded-full h-2 mt-4 overflow-hidden">
