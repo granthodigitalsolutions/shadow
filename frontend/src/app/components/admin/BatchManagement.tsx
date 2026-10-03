@@ -8,7 +8,7 @@ import { useToast } from "../../hooks/useToast";
 import { useDialog } from "../../contexts/DialogContext";
 import { Batch, BeltTest, School, StudentRecord } from "../../types/admin";
 import { useProgram } from "../../contexts/ProgramContext";
-import { formatBatchName } from "../../utils/batchFormatters";
+import { formatBatchName, batchQrUrl } from "../../utils/batchFormatters";
 import { filterEligibleStudents } from "../../utils/batchEligibility";
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; icon: typeof Clock }> = {
@@ -595,7 +595,7 @@ export default function BatchManagement() {
  <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 space-y-3">
  <div className="flex items-center gap-3">
  <div className="bg-white p-1.5 rounded-lg border border-indigo-100 flex-shrink-0">
- <QRCodeSVG value={batch.code} size={48} style={{ width: '48px', height: '48px' }} level="M" includeMargin={false} />
+ <QRCodeSVG value={batchQrUrl(batch.code)} size={48} style={{ width: '48px', height: '48px' }} level="M" includeMargin={false} />
  </div>
  <div className="flex-1 min-w-0">
  <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Batch Code</p>
@@ -792,7 +792,7 @@ export default function BatchManagement() {
  {generatedAllResult.created.map(({ belt, batch }) => (
  <div key={batch.id} className="flex items-center gap-3 p-3 bg-indigo-50 rounded-xl border border-indigo-100">
  <div className="bg-white p-1.5 rounded-lg border border-indigo-100 flex-shrink-0">
- <QRCodeSVG value={batch.code || ""} size={48} style={{ width: '48px', height: '48px' }} level="M" includeMargin={false} />
+ <QRCodeSVG value={batchQrUrl(batch.code || "")} size={48} style={{ width: '48px', height: '48px' }} level="M" includeMargin={false} />
  </div>
  <div className="flex-1 min-w-0">
  <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider truncate">{belt} &middot; {batch.maxSize} slot{batch.maxSize === 1 ? '' : 's'}</p>
@@ -828,7 +828,7 @@ export default function BatchManagement() {
  <div className="p-6 space-y-4 text-center">
  <div className="flex flex-col items-center gap-3">
  <div className="bg-white p-3 rounded-xl border border-indigo-100 shadow-sm inline-block">
- <QRCodeSVG value={generatedResult.code || ""} size={140} style={{ width: '140px', height: '140px' }} level="M" includeMargin={false} />
+ <QRCodeSVG value={batchQrUrl(generatedResult.code || "")} size={140} style={{ width: '140px', height: '140px' }} level="M" includeMargin={false} />
  </div>
  <div>
  <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Batch Code</p>
@@ -878,7 +878,7 @@ export default function BatchManagement() {
  ) : generateCodeModal.code ? (
  <div className="flex flex-col items-center gap-3">
  <div className="bg-white p-3 rounded-xl border border-indigo-100 shadow-sm inline-block">
- <QRCodeSVG value={generateCodeModal.code} size={140} style={{ width: '140px', height: '140px' }} level="M" includeMargin={false} />
+ <QRCodeSVG value={batchQrUrl(generateCodeModal.code)} size={140} style={{ width: '140px', height: '140px' }} level="M" includeMargin={false} />
  </div>
  <div>
  <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Batch Code</p>

@@ -89,4 +89,29 @@ const buildBatchSummary = async (batchDoc) => {
   return { summary, students };
 };
 
-module.exports = { getStudentsByIds, buildBatchSummary, CHUNK_SIZE };
+/**
+ * Capacity model. `maxSize` is the batch's configured capacity and is never
+ * reduced. `allocatedCount` (maintained transactionally by /allocate) is the
+ * total slots examiners have reserved; `allocatedAssigned` is how many
+ * students were added through those reservations. Students assigned before
+ * allocations existed (or by Admin) are "legacy" and also occupy capacity.
+ */
+const computeCapacity = (batch) => {
+  const total = Number.isInteger(batch.maxSize) ? batch.maxSize : (Array.isArray(batch.studentIds) ? batch.studentIds.length : 0);
+  const allocated = batch.allocatedCount || 0;
+  const assigned = Array.isArray(batch.studentIds) ? batch.studentIds.length : 0;
+  const legacy = Math.max(0, assigned - (batch.allocatedAssigned || 0));
+  return { total, allocated, legacy, available: Math.max(0, total - allocated - legacy) };
+};
+
+const allocationsRef = (batchId) => db.collection('batches').doc(batchId).collection('allocations');
+
+const toMyAllocation = (alloc) => {
+  const studentIds = alloc && Array.isArray(alloc.studentIds) ? alloc.studentIds : [];
+  const quantity = (alloc && alloc.quantity) || 0;
+  return { quantity, assigned: studentIds.length, remaining: Math.max(0, quantity - studentIds.length), studentIds };
+};
+
+const buildCapacityView = (batch, alloc) => ({ ...computeCapacity(batch), mine: toMyAllocation(alloc) });
+
+module.exports = { getStudentsByIds, buildBatchSummary, computeCapacity, allocationsRef, toMyAllocation, buildCapacityView, CHUNK_SIZE };

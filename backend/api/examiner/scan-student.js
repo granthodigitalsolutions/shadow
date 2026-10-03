@@ -1,8 +1,9 @@
 const { allowCors } = require('../../src/middleware/withCors');
 const { withErrorHandler } = require('../../src/middleware/withErrorHandler');
-const { verifyExaminerToken } = require('../../src/middleware/verifyExaminerToken');
+const { verifyExaminerToken, getExaminer } = require('../../src/middleware/verifyExaminerToken');
 const { db } = require('../../src/config/firebase');
 const { ValidationError, NotFoundError, ForbiddenError, ConflictError } = require('../../src/utils/errors');
+const { allocationsRef } = require('../../src/utils/examinerBatch');
 const logger = require('../../src/utils/logger');
 
 // Same QR payload convention already used by the admin QR Scanner
@@ -33,7 +34,7 @@ const handler = async (req, res) => {
     return res.status(405).json({ success: false, message: 'Method Not Allowed' });
   }
 
-  const { batchId } = req.examiner;
+  const { batchId, examinerId } = getExaminer(req);
   const studentId = parseStudentId(req.body?.qrValue ?? req.body?.studentId);
 
   if (!studentId) {
@@ -42,9 +43,10 @@ const handler = async (req, res) => {
 
   const batchRef = db.collection('batches').doc(batchId);
   const studentRef = db.collection('students').doc(studentId);
+  const allocRef = allocationsRef(batchId).doc(examinerId);
 
   const assignedStudent = await db.runTransaction(async (tx) => {
-    const [batchSnap, studentSnap] = await Promise.all([tx.get(batchRef), tx.get(studentRef)]);
+    const [batchSnap, studentSnap, allocSnap] = await Promise.all([tx.get(batchRef), tx.get(studentRef), tx.get(allocRef)]);
 
     if (!batchSnap.exists) {
       throw new NotFoundError('This batch no longer exists.');
@@ -90,6 +92,16 @@ const handler = async (req, res) => {
       throw new ForbiddenError('Student is not eligible for this batch.');
     }
 
+    // Students can only be added into slots this examiner has reserved.
+    const alloc = allocSnap.exists ? allocSnap.data() : null;
+    const myIds = alloc && Array.isArray(alloc.studentIds) ? alloc.studentIds : [];
+    if (!alloc || !alloc.quantity) {
+      throw new ForbiddenError('Allocate slots for yourself first, then add students.');
+    }
+    if (myIds.length >= alloc.quantity) {
+      throw new ConflictError(`All ${alloc.quantity} of your allocated slots are used. Allocate more slots to add another student.`);
+    }
+
     if (studentIds.length >= batch.maxSize) {
       throw new ValidationError('This batch is full — every badge slot already has a student.');
     }
@@ -102,6 +114,11 @@ const handler = async (req, res) => {
     tx.update(batchRef, {
       studentIds: nextStudentIds,
       status: newStatus,
+      allocatedAssigned: (batch.allocatedAssigned || 0) + 1,
+      updatedAt: now,
+    });
+    tx.update(allocRef, {
+      studentIds: [...myIds, studentId],
       updatedAt: now,
     });
     tx.update(studentRef, {
@@ -132,4 +149,4 @@ const handler = async (req, res) => {
   res.status(200).json({ success: true, student: assignedStudent });
 };
 
-module.exports = allowCors(withErrorHandler(handler));
+module.exports = allowCors(withErrorHandler(verifyExaminerToken(handler)));

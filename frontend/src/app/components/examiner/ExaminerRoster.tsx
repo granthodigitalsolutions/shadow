@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Users, LogOut, ArrowRight, Loader2, AlertCircle, ClipboardList, Camera, CheckCircle2, X, QrCode, UserPlus } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
-import { getExaminerStudents, scanExaminerStudent, ExaminerBatch, ExaminerStudent } from "../../services/examinerApi";
+import { getExaminerStudents, scanExaminerStudent, allocateExaminerSlots, ExaminerBatch, ExaminerStudent, ExaminerCapacity } from "../../services/examinerApi";
 import { formatBatchName } from "../../utils/batchFormatters";
 import { ThemeToggle } from "../ui/ThemeToggle";
 
@@ -30,6 +30,15 @@ export default function ExaminerRoster() {
   const [students, setStudents] = useState<ExaminerStudent[]>([]);
   const [batch, setBatch] = useState<ExaminerBatch | null>(null);
 
+  // -- Slot allocation (server is the source of truth; restored on every load) --
+  const [capacityInfo, setCapacityInfo] = useState<ExaminerCapacity | null>(null);
+  const [allocQty, setAllocQty] = useState("");
+  const [allocBusy, setAllocBusy] = useState(false);
+  const [allocFeedback, setAllocFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  // One id per user action, reused if the same action is retried after a
+  // network failure so the server applies it at most once.
+  const allocRequestRef = useRef<{ qty: number; id: string } | null>(null);
+
   const [selectedCount, setSelectedCount] = useState<number | null>(null);
   const [customMode, setCustomMode] = useState(false);
   const [customCount, setCustomCount] = useState("");
@@ -53,8 +62,8 @@ export default function ExaminerRoster() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fetchRoster = async () => {
-    setLoading(true);
+  const fetchRoster = async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const { ok, status, data } = await getExaminerStudents();
@@ -67,6 +76,7 @@ export default function ExaminerRoster() {
         return;
       }
       setStudents(data.students || []);
+      if (data.capacity) setCapacityInfo(data.capacity);
       if (data.batch) {
         setBatch(data.batch);
         localStorage.setItem("examinerBatch", JSON.stringify(data.batch));
@@ -80,7 +90,58 @@ export default function ExaminerRoster() {
 
   const pendingStudents = students.filter((s) => s.testStatus === "pending");
   const capacity = batch?.maxSize ?? students.length;
-  const slotsFull = capacity > 0 && students.length >= capacity;
+  // Students can only be added into this examiner's own reserved slots.
+  const slotsFull = !capacityInfo || capacityInfo.mine.remaining <= 0;
+
+  const handleAllocate = async () => {
+    if (allocBusy || !capacityInfo) return;
+    const raw = allocQty.trim();
+    if (!/^\d+$/.test(raw) || Number(raw) < 1) {
+      setAllocFeedback({ type: "error", message: "Enter a whole number greater than zero." });
+      return;
+    }
+    const qty = Number(raw);
+    if (qty > capacityInfo.available) {
+      setAllocFeedback({
+        type: "error",
+        message: capacityInfo.available === 0
+          ? "No slots are available in this batch."
+          : `Only ${capacityInfo.available} slot${capacityInfo.available === 1 ? " is" : "s are"} available - you asked for ${qty}.`,
+      });
+      return;
+    }
+    if (!allocRequestRef.current || allocRequestRef.current.qty !== qty) {
+      allocRequestRef.current = { qty, id: crypto.randomUUID() };
+    }
+    setAllocBusy(true);
+    setAllocFeedback(null);
+    try {
+      const { status, data } = await allocateExaminerSlots(qty, allocRequestRef.current.id);
+      if (status === 401) {
+        navigate("/examiner", { replace: true });
+        return;
+      }
+      // Any definitive server answer ends this action; a thrown network error
+      // (caught below) keeps the id so a retry cannot double-allocate.
+      allocRequestRef.current = null;
+      if (!data.success || !data.capacity) {
+        setAllocFeedback({ type: "error", message: data.message || "Could not allocate slots. Please try again." });
+        // The number may be stale - pull the real figures.
+        fetchRoster(true);
+        return;
+      }
+      setCapacityInfo(data.capacity);
+      setAllocQty("");
+      setAllocFeedback({
+        type: "success",
+        message: `${qty} slot${qty === 1 ? "" : "s"} allocated to you. ${data.capacity.available} left in the batch.`,
+      });
+    } catch (e: any) {
+      setAllocFeedback({ type: "error", message: (e?.message || "Could not reach the server.") + " Tap Allocate again to retry safely." });
+    } finally {
+      setAllocBusy(false);
+    }
+  };
 
   const handleExit = () => {
     localStorage.removeItem("examinerToken");
@@ -123,6 +184,9 @@ export default function ExaminerRoster() {
       // Reflect the new student immediately — no full re-fetch needed.
       setStudents((prev) => (prev.some((s) => s.id === data.student!.id) ? prev : [...prev, data.student!]));
       setBatch((prev) => (prev ? { ...prev, totalStudents: prev.totalStudents + 1, pendingCount: prev.pendingCount + 1 } : prev));
+      setCapacityInfo((prev) =>
+        prev ? { ...prev, mine: { ...prev.mine, assigned: prev.mine.assigned + 1, remaining: Math.max(0, prev.mine.remaining - 1), studentIds: [...prev.mine.studentIds, data.student!.id] } } : prev,
+      );
       setScanFeedback({ type: "success", message: `${data.student.name || "Student"} added — Ready.` });
       setManualId("");
     } catch (e: any) {
@@ -312,12 +376,93 @@ export default function ExaminerRoster() {
                 {batch ? batch.pendingCount : pendingStudents.length} / {batch ? batch.totalStudents : students.length}
               </p>
               <p className="text-xs font-semibold text-zinc-400 mt-0.5">
-                {students.length} of {capacity} badge slot{capacity === 1 ? "" : "s"} assigned
+                {capacityInfo
+                  ? `${capacityInfo.mine.assigned} of ${capacityInfo.mine.quantity} allocated slot${capacityInfo.mine.quantity === 1 ? "" : "s"} filled`
+                  : `${students.length} of ${capacity} badge slot${capacity === 1 ? "" : "s"} assigned`}
               </p>
             </div>
           </div>
           <ClipboardList className="w-8 h-8 text-zinc-200 dark:text-zinc-700" />
         </div>
+
+        {/* Slot allocation */}
+        {capacityInfo && (
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-sm p-6 space-y-4">
+            <div>
+              <h2 className="font-bold text-lg text-zinc-900 dark:text-zinc-50 mb-1 flex items-center gap-2">
+                <Users className="w-5 h-5 text-blue-500" />
+                Allocate Your Slots
+              </h2>
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                Choose how many of this batch's open slots you will take. Other examiners share the same pool.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-center">
+              {[
+                { label: "Total", value: capacityInfo.total },
+                { label: "Available", value: capacityInfo.available },
+                { label: "Yours", value: capacityInfo.mine.quantity },
+              ].map((c) => (
+                <div key={c.label} className="bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3">
+                  <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">{c.value}</p>
+                  <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">{c.label}</p>
+                </div>
+              ))}
+            </div>
+
+            {allocFeedback && (
+              <div
+                role="status"
+                className={`flex items-start gap-2.5 p-3.5 rounded-xl text-sm font-semibold ${
+                  allocFeedback.type === "success"
+                    ? "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50"
+                    : "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800/50"
+                }`}
+              >
+                {allocFeedback.type === "success" ? (
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                )}
+                <span>{allocFeedback.message}</span>
+              </div>
+            )}
+
+            <div>
+              <label htmlFor="alloc-qty" className="block text-xs font-bold text-zinc-600 dark:text-zinc-300 uppercase tracking-wider mb-2">
+                Number of students you will take
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="alloc-qty"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={capacityInfo.available}
+                  step={1}
+                  value={allocQty}
+                  disabled={allocBusy || capacityInfo.available === 0}
+                  onChange={(e) => {
+                    setAllocQty(e.target.value);
+                    setAllocFeedback(null);
+                  }}
+                  onKeyDown={(e) => e.key === "Enter" && handleAllocate()}
+                  placeholder={capacityInfo.available === 0 ? "No slots left" : `1 - ${capacityInfo.available}`}
+                  className="flex-1 min-w-0 px-4 py-3 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 placeholder-zinc-400 dark:placeholder-zinc-500 caret-blue-500 border-2 border-zinc-300 dark:border-zinc-600 rounded-xl text-lg font-bold focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-zinc-100 dark:disabled:bg-zinc-800"
+                />
+                <button
+                  onClick={handleAllocate}
+                  disabled={allocBusy || capacityInfo.available === 0 || !allocQty.trim()}
+                  className="flex-shrink-0 flex items-center justify-center gap-2 px-5 py-3 bg-blue-500 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-bold active:scale-95 transition-all"
+                >
+                  {allocBusy && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Allocate
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Scan-to-assign */}
         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-sm p-6 space-y-4">
@@ -328,7 +473,9 @@ export default function ExaminerRoster() {
             </h2>
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               {slotsFull
-                ? "Every badge slot for this batch has a student assigned."
+                ? capacityInfo && capacityInfo.mine.quantity > 0
+                  ? "All your allocated slots have a student. Allocate more slots above to add another."
+                  : "Allocate your slots above first, then add students."
                 : "Scan each present student's own QR code as they arrive — they're added here right away."}
             </p>
           </div>
@@ -406,7 +553,7 @@ export default function ExaminerRoster() {
                   onChange={(e) => setManualId(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleManualAdd()}
                   placeholder="Enter Student ID"
-                  className="flex-1 min-w-0 px-4 py-3 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:opacity-50"
+                  className="flex-1 min-w-0 px-4 py-3 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 placeholder-zinc-400 dark:placeholder-zinc-500 border border-zinc-300 dark:border-zinc-600 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:opacity-50"
                 />
                 <button
                   onClick={handleManualAdd}
@@ -523,7 +670,7 @@ export default function ExaminerRoster() {
                   setSelectedCount(null);
                 }}
                 onChange={(e) => setCustomCount(e.target.value.replace(/[^0-9]/g, ""))}
-                className="flex-1 min-w-0 px-3 py-2 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl text-lg font-bold text-center focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                className="flex-1 min-w-0 px-3 py-2 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 placeholder-zinc-400 dark:placeholder-zinc-500 border border-zinc-300 dark:border-zinc-600 rounded-xl text-lg font-bold text-center focus:outline-none focus:ring-2 focus:ring-blue-500/30"
               />
             </button>
 

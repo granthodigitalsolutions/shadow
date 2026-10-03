@@ -1,8 +1,9 @@
 const { allowCors } = require('../../src/middleware/withCors');
 const { withErrorHandler } = require('../../src/middleware/withErrorHandler');
-const { verifyExaminerToken } = require('../../src/middleware/verifyExaminerToken');
+const { verifyExaminerToken, getExaminer } = require('../../src/middleware/verifyExaminerToken');
 const { db } = require('../../src/config/firebase');
 const { ValidationError, ForbiddenError, NotFoundError, ConflictError } = require('../../src/utils/errors');
+const { allocationsRef } = require('../../src/utils/examinerBatch');
 const logger = require('../../src/utils/logger');
 
 // Max points per scoring category (technical / athletic).
@@ -13,7 +14,7 @@ const handler = async (req, res) => {
     return res.status(405).json({ success: false, message: 'Method Not Allowed' });
   }
 
-  const { batchId } = req.examiner;
+  const { batchId, examinerId } = getExaminer(req);
   const {
     studentId,
     technicalScore,
@@ -54,6 +55,12 @@ const handler = async (req, res) => {
 
   if (!studentIds.includes(studentId)) {
     throw new ForbiddenError('This student is not part of your verified batch.');
+  }
+
+  // A student reserved under another examiner's allocation is theirs to score.
+  const owner = await allocationsRef(batchId).where('studentIds', 'array-contains', studentId).limit(1).get();
+  if (!owner.empty && owner.docs[0].id !== examinerId) {
+    throw new ForbiddenError("This student is in another examiner's allocation.");
   }
 
   await db.runTransaction(async (tx) => {

@@ -44,6 +44,17 @@ export interface ExaminerStudent {
   testStatus: "pending" | "passed" | "failed";
 }
 
+export interface ExaminerCapacity {
+  /** Configured batch capacity - never reduced by allocations. */
+  total: number;
+  /** Slots reserved by all examiners together. */
+  allocated: number;
+  /** Capacity still free for any examiner to reserve (server-computed). */
+  available: number;
+  /** This examiner's own reservation. */
+  mine: { quantity: number; assigned: number; remaining: number; studentIds: string[] };
+}
+
 export interface VerifyCodeResponse {
   success: boolean;
   token?: string;
@@ -55,6 +66,14 @@ export interface ExaminerStudentsResponse {
   success: boolean;
   students?: ExaminerStudent[];
   batch?: ExaminerBatch;
+  capacity?: ExaminerCapacity;
+  message?: string;
+}
+
+export interface AllocateSlotsResponse {
+  success: boolean;
+  replayed?: boolean;
+  capacity?: ExaminerCapacity;
   message?: string;
 }
 
@@ -169,6 +188,19 @@ export async function submitExaminerScore(
   return examinerFetch<SubmitExaminerScoreResponse>("/submit-score", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+// Reserve `quantity` slots for this examiner. `requestId` is generated once
+// per user action by the caller and reused on any retry, so a double-click or
+// network retry is applied by the server only once.
+export async function allocateExaminerSlots(
+  quantity: number,
+  requestId: string,
+): Promise<{ ok: boolean; status: number; data: AllocateSlotsResponse }> {
+  return examinerFetch<AllocateSlotsResponse>("/allocate", {
+    method: "POST",
+    body: JSON.stringify({ quantity, requestId }),
   });
 }
 

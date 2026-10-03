@@ -71,3 +71,12 @@ export function formatSafeDate(dateVal: any): string {
   return parsed.toLocaleDateString();
 }
 
+/**
+ * What a Batch QR encodes: a link to the Examiner entry route on whichever
+ * domain the Admin app is served from (teamshadowk.com in production). It
+ * carries only the same 6-digit batch code that is printed on the sheet - no
+ * password or token - and the server still verifies it and issues a
+ * short-lived, signed examiner session.
+ */
+export const batchQrUrl = (code: string): string =>
+  `${typeof window !== 'undefined' ? window.location.origin : ''}/examiner?code=${encodeURIComponent(code)}`;

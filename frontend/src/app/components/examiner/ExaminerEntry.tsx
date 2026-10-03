@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { QrCode, Camera, Upload, X, ShieldCheck, ArrowRight } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
 import jsQR from "jsqr";
@@ -9,11 +9,25 @@ import { ThemeToggle } from "../ui/ThemeToggle";
 const CODE_LENGTH = 6;
 const CODE_REGEX = /^\d{6}$/;
 
+// A Batch QR encodes a link like https://teamshadowk.com/examiner?code=123456;
+// older printed QRs encode the bare 6-digit code. Accept both.
+const extractBatchCode = (raw: string): string | null => {
+  const text = raw.trim();
+  if (CODE_REGEX.test(text)) return text;
+  try {
+    const fromUrl = new URL(text).searchParams.get("code")?.trim() || "";
+    return CODE_REGEX.test(fromUrl) ? fromUrl : null;
+  } catch {
+    return null;
+  }
+};
+
 // Public, no-login landing page for the Examiner flow (Phase 4). An Examiner
 // enters the 6-digit code printed/QR-coded on a Phase 3 "Generate Batch"
 // roster, or scans the QR code directly, to get a batch-scoped session token.
 export default function ExaminerEntry() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [code, setCode] = useState("");
   const [verifying, setVerifying] = useState(false);
@@ -30,11 +44,25 @@ export default function ExaminerEntry() {
 
   // Reopening the app mid-event with a still-valid token skips straight to
   // the roster — don't block the initial render on this, just redirect fast.
+  // Arriving from a scanned Batch QR (?code=123456) verifies that code right
+  // away and lands on the batch; an invalid/expired code shows the normal
+  // error with the manual entry box still available.
   useEffect(() => {
+    const qrCode = extractBatchCode(searchParams.get("code") || "");
+    if (qrCode) {
+      // A QR for a (possibly different) batch always wins over a stored session.
+      localStorage.removeItem("examinerToken");
+      localStorage.removeItem("examinerBatch");
+      setSearchParams({}, { replace: true });
+      setCode(qrCode);
+      handleVerify(qrCode);
+      return;
+    }
     if (localStorage.getItem("examinerToken")) {
       navigate("/examiner/batch", { replace: true });
     }
-  }, [navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleVerify = async (candidate: string) => {
     if (!CODE_REGEX.test(candidate)) {
@@ -88,8 +116,8 @@ export default function ExaminerEntry() {
           { fps: 10, qrbox: { width: 250, height: 250 } },
           async (decodedText) => {
             if (isProcessingRef.current) return;
-            const candidate = decodedText.trim();
-            if (!CODE_REGEX.test(candidate)) return; // ignore unrelated QR codes
+            const candidate = extractBatchCode(decodedText);
+            if (!candidate) return; // ignore unrelated QR codes
 
             isProcessingRef.current = true;
 
@@ -184,8 +212,8 @@ export default function ExaminerEntry() {
           return;
         }
 
-        const candidate = decoded.data.trim();
-        if (!CODE_REGEX.test(candidate)) {
+        const candidate = extractBatchCode(decoded.data);
+        if (!candidate) {
           setErrorMsg("That QR code isn't a valid batch code.");
           return;
         }

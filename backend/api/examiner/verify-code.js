@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { allowCors } = require('../../src/middleware/withCors');
 const { withErrorHandler } = require('../../src/middleware/withErrorHandler');
 const { db } = require('../../src/config/firebase');
@@ -30,7 +31,7 @@ const handler = async (req, res) => {
   const batchDoc = snapshot.docs[0];
   const { summary } = await buildBatchSummary(batchDoc);
 
-  const token = jwt.sign({ batchId: batchDoc.id }, jwtSecret, { expiresIn: TOKEN_EXPIRY });
+  const token = jwt.sign({ batchId: batchDoc.id, examinerId: crypto.randomUUID() }, jwtSecret, { expiresIn: TOKEN_EXPIRY });
 
   logger.info('Examiner verified batch code', {
     batchId: batchDoc.id,
