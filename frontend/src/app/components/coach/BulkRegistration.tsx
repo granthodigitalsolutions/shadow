@@ -354,7 +354,7 @@ export default function BulkRegistration() {
                             </td>
                             <td className="p-3 text-zinc-600 dark:text-zinc-400">{s.programType}</td>
                             <td className="p-3 text-zinc-600 dark:text-zinc-400 truncate max-w-[150px]">{s.school}</td>
-                            <td className="p-3 text-zinc-600 dark:text-zinc-400">{s.programType === 'KARATE' ? s.beltLevel : `Stage ${s.stageLevel}`}</td>
+                            <td className="p-3 text-zinc-600 dark:text-zinc-400">{s.examTransition ? (s.examTransition.from ? `${s.examTransition.from} → ${s.examTransition.to}` : s.examTransition.to) : (s.programType === 'KARATE' ? s.beltLevel : `Stage ${s.stageLevel}`)}</td>
                             <td className="p-3 text-right font-medium text-zinc-900 dark:text-zinc-200">₹{s.fee}</td>
                           </tr>
                         ))}
@@ -394,7 +394,7 @@ export default function BulkRegistration() {
                             <div>
                               <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-0.5">Program / Level</p>
                               <p className="text-zinc-800 dark:text-zinc-200 font-medium">
-                                {s.programType} - {s.programType === 'KARATE' ? s.beltLevel : `Stage ${s.stageLevel}`}
+                                {s.programType} - {s.examTransition ? (s.examTransition.from ? `${s.examTransition.from} → ${s.examTransition.to}` : s.examTransition.to) : (s.programType === 'KARATE' ? s.beltLevel : `Stage ${s.stageLevel}`)}
                               </p>
                             </div>
                             <div>

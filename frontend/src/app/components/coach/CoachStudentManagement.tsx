@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo } from "react";
+import { Link } from "react-router-dom";
 import {
   Search, Edit2, Trash2, X, Save, AlertTriangle,
-  CheckCircle, Users, RefreshCw, ChevronDown, Filter, School
+  CheckCircle, Users, RefreshCw, ChevronDown, Filter, School, UserPlus
 } from "lucide-react";
 import { firebaseStudentService } from "../../services/firebaseData";
 import { firebaseAuthService } from "../../services/firebaseAuth";
@@ -143,10 +144,17 @@ export default function CoachStudentManagement() {
               {selectedSchool ? ` at ${selectedSchool.name}` : ""}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-bold text-blue-600 bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 px-3 py-1.5 rounded-lg">
               MY REGISTRATIONS ONLY
             </span>
+            <Link
+              to="/coach/bulk-register"
+              className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-zinc-950 font-bold text-sm rounded-xl transition-colors active:scale-95"
+            >
+              <UserPlus className="w-4 h-4" />
+              Bulk Registration
+            </Link>
           </div>
         </div>
 

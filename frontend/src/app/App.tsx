@@ -43,7 +43,6 @@ const CoachRegister        = lazyWithRetry(() => import("./components/coach/Coac
 const CoachDashboard       = lazyWithRetry(() => import("./components/coach/CoachDashboard"));
 const BulkRegistration         = lazyWithRetry(() => import("./components/coach/BulkRegistration"));
 const CoachStudentManagement = lazyWithRetry(() => import("./components/coach/CoachStudentManagement"));
-const CoachMySchools = lazyWithRetry(() => import("./components/coach/CoachMySchools"));
 
 // Lazy load new public pages
 const HomePage                 = lazyWithRetry(() => import("./components/pages/HomePage"));
@@ -410,7 +409,7 @@ const router = createBrowserRouter([
   {
     element: <CoachProtectedLayout />,
     children: [
-      { path: "/coach/schools",         element: <CoachMySchools /> },
+      { path: "/coach/schools",         element: <Navigate to="/coach/dashboard" replace /> },
       { path: "/coach/dashboard",      element: <CoachDashboard /> },
       { path: "/coach/bulk-register",  element: <BulkRegistration /> },
       { path: "/coach/students",       element: <CoachStudentManagement /> },
@@ -421,7 +420,7 @@ const router = createBrowserRouter([
   {
     element: <PublicLayout />,
     children: [
-      { path: "/secretary/schools",        element: <Navigate to="/coach/schools" replace /> },
+      { path: "/secretary/schools",        element: <Navigate to="/coach/dashboard" replace /> },
       { path: "/secretary/dashboard",      element: <Navigate to="/coach/dashboard" replace /> },
       { path: "/secretary/bulk-register",  element: <Navigate to="/coach/bulk-register" replace /> },
       { path: "/secretary/students",       element: <Navigate to="/coach/students" replace /> },

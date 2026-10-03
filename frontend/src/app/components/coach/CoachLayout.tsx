@@ -1,6 +1,6 @@
 import { ReactNode, useState, useEffect, useTransition } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { LogOut, LayoutDashboard, Users, UserPlus, Menu, X, ChevronRight, UserCircle, School, ChevronDown, Check } from "lucide-react";
+import { LogOut, LayoutDashboard, Users, Menu, X, ChevronRight, UserCircle, School, ChevronDown, Check } from "lucide-react";
 import { firebaseAuthService } from "../../services/firebaseAuth";
 import { ThemeToggle } from "../ui/ThemeToggle";
 import { useCoachSchool } from "../../contexts/CoachSchoolContext";
@@ -28,12 +28,15 @@ export default function CoachLayout({ children }: CoachLayoutProps) {
     startTransition(() => navigate("/coach/login"));
   };
 
+  // Bulk Registration is reached from the Students page (it is part of
+  // student management), so it lights up the Students item rather than
+  // having its own entry.
   const navItems = [
-    { path: `/coach/schools`,  icon: School,           label: "My Schools" },
-    { path: `/coach/dashboard`, icon: LayoutDashboard, label: "Dashboard" },
-    { path: `/coach/students`,  icon: Users,           label: "Students" },
-    { path: `/coach/bulk-register`, icon: UserPlus,    label: "Bulk Registration" },
+    { path: `/coach/dashboard`, icon: LayoutDashboard, label: "Dashboard", match: [`/coach/dashboard`] },
+    { path: `/coach/students`,  icon: Users,           label: "Students",  match: [`/coach/students`, `/coach/bulk-register`] },
   ];
+  const isItemActive = (item: { match: string[] }) =>
+    item.match.some((m) => (location.pathname || '').includes(m));
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-zinc-950 flex flex-col lg:flex-row pb-20 lg:pb-0">
@@ -87,15 +90,6 @@ export default function CoachLayout({ children }: CoachLayoutProps) {
                     {school.id === selectedSchool?.id && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
                   </button>
                 ))}
-                <button
-                  onClick={() => {
-                    setIsSchoolMenuOpen(false);
-                    startTransition(() => navigate("/coach/schools"));
-                  }}
-                  className="w-full px-4 py-2.5 text-xs font-bold text-blue-600 hover:bg-blue-50 dark:hover:bg-zinc-800 transition-colors text-left border-t border-zinc-100 dark:border-zinc-800"
-                >
-                  Manage Schools
-                </button>
               </div>
             )}
           </div>
@@ -103,7 +97,7 @@ export default function CoachLayout({ children }: CoachLayoutProps) {
 
         <nav className="flex-1 overflow-y-auto py-4 px-4 space-y-2 custom-scrollbar mt-4">
           {navItems.map((item) => {
-            const isActive = (location.pathname || '').includes(item.path);
+            const isActive = isItemActive(item);
             return (
               <button
                 key={item.path}
@@ -190,7 +184,7 @@ export default function CoachLayout({ children }: CoachLayoutProps) {
             
             <div className="flex-1 overflow-y-auto p-4 space-y-2">
               {navItems.map((item) => {
-                const isActive = (location.pathname || '').includes(item.path);
+                const isActive = isItemActive(item);
                 return (
                   <button
                     key={item.path}
@@ -226,7 +220,7 @@ export default function CoachLayout({ children }: CoachLayoutProps) {
       ────────────────────────────────────────────────────────────────── */}
       <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-zinc-950 border-t border-zinc-200 dark:border-zinc-200 dark:border-zinc-800 flex items-center justify-around p-2 z-40 pb-safe">
         {navItems.map(item => {
-          const isActive = (location.pathname || '').includes(item.path);
+          const isActive = isItemActive(item);
           return (
             <button
               key={item.path}

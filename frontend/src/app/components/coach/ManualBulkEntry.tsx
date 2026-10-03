@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { firebaseFeeStructureService, firebaseSilambanFeeService, FeeStructure, SilambanFeeStructure } from '../../services/firebaseData';
 import { Settings, Save, Trash2, AlertTriangle, School as SchoolIcon } from 'lucide-react';
-import { belts } from '../../data';
+import { buildKarateTransitions, buildSilambamTransitions, formatTransitionOption } from '../../utils/examTransitions';
 
 interface ManualBulkEntryProps {
   onStudentsGenerated: (students: any[]) => void;
@@ -30,6 +30,7 @@ export default function ManualBulkEntry({ onStudentsGenerated, selectedProgram, 
   const [karateFees, setKarateFees] = useState<FeeStructure[]>([]);
   const [silambamFees, setSilambamFees] = useState<SilambanFeeStructure[]>([]);
   const [loading, setLoading] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [errorStudentIndex, setErrorStudentIndex] = useState<number | null>(null);
 
@@ -45,41 +46,43 @@ export default function ManualBulkEntry({ onStudentsGenerated, selectedProgram, 
     }
   }, [errorStudentIndex]);
 
+  // The Admin fee structure is the single source of truth. Fetch the FULL
+  // ordered lists (not just active ones): each transition's "from" is the
+  // previous belt/stage in that list, exactly like the Admin page, and only
+  // active entries are offered as options.
+  const fetchConfig = async () => {
+    setLoading(true);
+    setConfigError(null);
+    try {
+      const [kFees, sFees] = await Promise.all([
+        firebaseFeeStructureService.getAll(),
+        firebaseSilambanFeeService.getAll(),
+      ]);
+      setKarateFees(kFees);
+      setSilambamFees(sFees);
+    } catch (err) {
+      console.error(err);
+      setConfigError("Couldn't load the fee configuration, so promotions and fees can't be shown.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchConfig = async () => {
-      setLoading(true);
-      try {
-        const [kFees, sFees] = await Promise.all([
-          firebaseFeeStructureService.getActive(),
-          firebaseSilambanFeeService.getActive(),
-        ]);
-        setKarateFees(kFees);
-        setSilambamFees(sFees);
-      } catch (err) {
-        console.error(err);
-        setError("Failed to load configuration data.");
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProgram]);
 
-  // Build belt options from Firestore fee structure
-  const beltOptions = karateFees.map((fee) => {
-    return {
-      value: fee.id,
-      label: fee.beltColor,
-      fee: fee.fee
-    };
-  });
+  const karateTransitions = useMemo(() => buildKarateTransitions(karateFees), [karateFees]);
+  const silambamTransitions = useMemo(() => buildSilambamTransitions(silambamFees), [silambamFees]);
+  const transitions = selectedProgram === 'KARATE' ? karateTransitions : silambamTransitions;
 
-  // Build silambam stage options from Firestore
-  const stageOptions = silambamFees.map(sf => ({
-    label: sf.stageName || `Stage ${sf.stageNumber}`,
-    value: sf.stageNumber,
-    fee: sf.fee
-  }));
+  // The form stores the Karate fee doc id in `beltIndex` and the Silambam
+  // stage number in `stageLevel` (unchanged keys, so cached drafts still load).
+  const findTransition = (s: any) =>
+    selectedProgram === 'KARATE'
+      ? karateTransitions.find(t => t.id === s.beltIndex)
+      : silambamTransitions.find(t => String(t.stageNumber) === String(s.stageLevel));
 
   useEffect(() => {
     // Generate empty forms when count changes
@@ -120,12 +123,6 @@ export default function ManualBulkEntry({ onStudentsGenerated, selectedProgram, 
       setError(null);
       setErrorStudentIndex(null);
     }
-  };
-
-  // Get fee for a given silambam stage from Firestore fees
-  const getSilambamFee = (stageNumber: number): number => {
-    const matchingFee = silambamFees.find(f => f.stageNumber === stageNumber);
-    return matchingFee ? matchingFee.fee : 800;
   };
 
   const handleClearAll = () => {
@@ -172,13 +169,20 @@ export default function ManualBulkEntry({ onStudentsGenerated, selectedProgram, 
         setErrorStudentIndex(i);
         return;
       }
-      if (selectedProgram === 'KARATE' && (s.beltIndex === '' || s.beltIndex === undefined)) {
-        setError(`Belt selection is required for Student ${i + 1}.`);
+      const noun = selectedProgram === 'KARATE' ? 'Belt promotion' : 'Stage promotion';
+      const selectedTransition = findTransition(s);
+      if (selectedProgram === 'KARATE' ? (s.beltIndex === '' || s.beltIndex === undefined) : !s.stageLevel) {
+        setError(`${noun} is required for Student ${i + 1}.`);
         setErrorStudentIndex(i);
         return;
       }
-      if (selectedProgram === 'SELAMBAM' && !s.stageLevel) {
-        setError(`Stage Level is required for Student ${i + 1}.`);
+      if (!selectedTransition) {
+        setError(`${noun} for Student ${i + 1} is no longer available. Please choose it again.`);
+        setErrorStudentIndex(i);
+        return;
+      }
+      if (!selectedTransition.feeConfigured) {
+        setError(`No fee is configured for "${selectedTransition.label}" (Student ${i + 1}). Ask the Admin to set it before registering.`);
         setErrorStudentIndex(i);
         return;
       }
@@ -199,22 +203,20 @@ export default function ManualBulkEntry({ onStudentsGenerated, selectedProgram, 
     const year = new Date().getFullYear();
 
     const formattedStudents = studentsData.map((s, i) => {
-      let fee = 0;
       let beltLevel = '';
       let beltIdx = 0;
 
       const schoolName = availableSchools.find(sch => sch.id === s.schoolId)?.name || 'Unknown School';
 
+      // Validated above, so this always resolves with a configured fee.
+      const transition = findTransition(s)!;
+      const fee = transition.fee;
+
       if (selectedProgram === 'KARATE') {
-        const matchingFee = karateFees.find(f => f.id === s.beltIndex);
-        if (matchingFee) {
-          beltLevel = matchingFee.beltColor;
-          beltIdx = (matchingFee.order || 1) - 1;
-          fee = matchingFee.fee || 800;
-        }
-      } else {
-        const stageNum = Number(s.stageLevel);
-        fee = getSilambamFee(stageNum);
+        // Same stored values as before for this selection (the exam's belt);
+        // the promotion itself is recorded separately in examTransition.
+        beltLevel = transition.to;
+        beltIdx = (transition.order || 1) - 1;
       }
 
       return {
@@ -233,6 +235,7 @@ export default function ManualBulkEntry({ onStudentsGenerated, selectedProgram, 
         beltLevel: beltLevel,
         beltIndex: beltIdx,
         stageLevel: s.stageLevel ? Number(s.stageLevel) : undefined,
+        examTransition: { from: transition.from, to: transition.to, feeId: transition.id },
         fee: fee
       };
     });
@@ -240,7 +243,22 @@ export default function ManualBulkEntry({ onStudentsGenerated, selectedProgram, 
     onStudentsGenerated(formattedStudents);
   };
 
-  if (loading) return <div className="p-8 text-center text-zinc-500">Loading config...</div>;
+  if (loading) return <div className="p-8 text-center text-zinc-500">Loading fee configuration...</div>;
+
+  if (configError) {
+    return (
+      <div className="bg-white dark:bg-zinc-950 border border-red-200 dark:border-red-500/20 rounded-2xl p-8 text-center shadow-sm">
+        <AlertTriangle className="w-8 h-8 text-red-500 mx-auto mb-3" />
+        <p className="text-sm font-medium text-red-600 dark:text-red-400 mb-4">{configError}</p>
+        <button
+          onClick={fetchConfig}
+          className="px-5 py-2.5 bg-blue-500 hover:bg-blue-600 text-zinc-950 font-bold text-sm rounded-xl transition-colors"
+        >
+          Try Again
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -340,33 +358,40 @@ export default function ManualBulkEntry({ onStudentsGenerated, selectedProgram, 
                 </select>
               </div>
 
-              {/* Belt/Stage */}
+              {/* Belt / Stage promotion - options + fees come from the Admin fee structure */}
               <div className="col-span-2 md:col-span-2">
                 <label className="block text-[11px] uppercase tracking-wider font-bold text-zinc-500 dark:text-zinc-400 mb-1.5">
-                  {selectedProgram === 'KARATE' ? 'Belt *' : 'Stage Level *'}
+                  {selectedProgram === 'KARATE' ? 'Belt Promotion *' : 'Stage Promotion *'}
                 </label>
-                {selectedProgram === 'KARATE' ? (
-                  <select 
-                    value={s.beltIndex}
-                    onChange={e => handleStudentChange(index, 'beltIndex', e.target.value)}
-                    className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-zinc-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                  >
-                    <option value="">Select Belt</option>
-                    {beltOptions.map(b => (
-                      <option key={b.value} value={b.value}>{b.label} — ₹{b.fee}</option>
-                    ))}
-                  </select>
+                <select
+                  value={selectedProgram === 'KARATE' ? s.beltIndex : s.stageLevel}
+                  onChange={e => handleStudentChange(index, selectedProgram === 'KARATE' ? 'beltIndex' : 'stageLevel', e.target.value)}
+                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-zinc-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                >
+                  <option value="">{selectedProgram === 'KARATE' ? 'Select Belt Promotion' : 'Select Stage Promotion'}</option>
+                  {transitions.map(t => (
+                    <option
+                      key={t.id}
+                      value={selectedProgram === 'KARATE' ? t.id : t.stageNumber}
+                      disabled={!t.feeConfigured}
+                    >
+                      {formatTransitionOption(t)}
+                    </option>
+                  ))}
+                </select>
+                {transitions.length === 0 ? (
+                  <p className="text-[11px] text-red-500 mt-1.5">
+                    No {selectedProgram === 'KARATE' ? 'belt' : 'stage'} fees are configured yet. Ask the Admin to set them up.
+                  </p>
                 ) : (
-                  <select 
-                    value={s.stageLevel}
-                    onChange={e => handleStudentChange(index, 'stageLevel', e.target.value)}
-                    className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-zinc-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                  >
-                    <option value="">Select Stage</option>
-                    {stageOptions.map(st => (
-                      <option key={st.value} value={st.value}>{st.label} — ₹{st.fee}</option>
-                    ))}
-                  </select>
+                  (() => {
+                    const picked = findTransition(s);
+                    return picked ? (
+                      <p className={`text-[11px] font-semibold mt-1.5 ${picked.feeConfigured ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>
+                        {picked.feeConfigured ? `Fee: ₹${picked.fee.toLocaleString()}` : 'Fee not configured'}
+                      </p>
+                    ) : null;
+                  })()
                 )}
               </div>
 
