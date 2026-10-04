@@ -52,10 +52,9 @@ export default function BatchManagement() {
  const { karate: karateT, silambam: silambamT } = useExamTransitions();
  // School the batches are generated for. Defaults to the page's school; the
  // admin can pick any active school (or Individual) in the modal.
- const [generateSchoolId, setGenerateSchoolId] = useState("");
- const [generateSchools, setGenerateSchools] = useState<School[]>([]);
- const genSchoolId = generateSchoolId || targetSchoolId || "";
- const genIsIndividual = genSchoolId === "individual";
+ // Batches are always generated for the school whose page this is.
+ const genSchoolId = targetSchoolId || "";
+ const genIsIndividual = isIndividual;
  const [generateForm, setGenerateForm] = useState({ beltTestId: "", belt: "" });
  const [generating, setGenerating] = useState(false);
  const [generatedResult, setGeneratedResult] = useState<Batch | null>(null);
@@ -252,9 +251,10 @@ export default function BatchManagement() {
 
  const openGenerateModal = (mode: "all" | "selective") => {
  setGenerateMode(mode);
- setGenerateSchoolId(targetSchoolId || "");
+ // The test is chosen automatically: the active belt/stage test (or the only one).
+ const autoTest = beltTests.find((t) => t.isActive) || (beltTests.length === 1 ? beltTests[0] : undefined);
+ setGenerateForm({ beltTestId: autoTest?.id || "", belt: "" });
  setShowGenerateModal(true);
- firebaseSchoolService.getActive(currentProgram === "ALL" ? undefined : (currentProgram as any)).then(setGenerateSchools).catch(() => setGenerateSchools([]));
  refreshStudents();
  };
 
@@ -759,26 +759,12 @@ export default function BatchManagement() {
  : "Instantly creates one new batch of empty badge slots, sized to the number of currently-eligible students for the selected Belt Test and Belt, along with a unique batch code and QR code. Students are assigned one at a time as the examiner scans them in."}
  </p>
  <div>
- <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">School *</label>
- <select
- value={genSchoolId}
- onChange={e => { setGenerateSchoolId(e.target.value); setGenerateForm(p => ({ ...p, belt: "" })); }}
- disabled={generating}
- className="w-full px-4 py-2.5 border border-zinc-200 dark:border-zinc-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium bg-white dark:bg-zinc-950 text-gray-900 dark:text-zinc-50 disabled:opacity-50"
- >
- <option value="individual">Individual students</option>
- {generateSchools.map(sc => <option key={sc.id} value={sc.id}>{sc.branch ? `${sc.name} - ${sc.branch}` : sc.name}</option>)}
- {genSchoolId && genSchoolId !== "individual" && !generateSchools.some(sc => sc.id === genSchoolId) && (
- <option value={genSchoolId}>{school ? school.name : "Selected school"}</option>
+ <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Belt / Stage Test</label>
+ {generateSelectedTest ? (
+ <div className="w-full px-4 py-2.5 border border-zinc-200 dark:border-zinc-800 rounded-xl text-sm font-semibold bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50">{generateSelectedTest.name}</div>
+ ) : (
+ <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">No active belt / stage test. Activate one first (Belt Tests).</p>
  )}
- </select>
- </div>
- <div>
- <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Belt / Stage Test *</label>
- <select value={generateForm.beltTestId} onChange={e => setGenerateForm(p => ({ ...p, beltTestId: e.target.value, belt: "" }))} className="w-full px-4 py-2.5 bg-zinc-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium bg-white dark:bg-zinc-950 dark:bg-zinc-900 text-gray-900 dark:text-zinc-50 dark:text-zinc-50 bg-transparent dark:bg-zinc-900 dark:text-zinc-50">
- <option value="">Select Test...</option>
- {beltTests.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
- </select>
  </div>
  {generateMode === "selective" && (
  <div>
