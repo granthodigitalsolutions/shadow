@@ -108,7 +108,7 @@ export default function SettingsNew() {
  const handleDeleteAllData = async () => {
  const confirmed = await showConfirm({
  title: "⚠️ Delete ALL Data",
- message: "This will permanently delete ALL students, batches, belt tests, programs, branches, and system settings. Coaches, Schools, Fee Structures, Fee Requests, and Referees are NOT affected. This action CANNOT be undone!",
+ message: "This will permanently delete ALL students, batches, belt tests, schools (with their coach-school links and fee requests), programs, branches, and system settings. Coaches, Fee Structures, and Referees are NOT affected. This action CANNOT be undone!",
  confirmText: "Yes, Delete Everything",
  variant: "danger"
  });
@@ -117,15 +117,18 @@ export default function SettingsNew() {
 
  setLoading(true);
  try {
- // Coaches, coachSchools, schools, schoolFeeRequests, feeStructure,
- // silambanFees, and referees are intentionally excluded — Delete All resets
- // transactional/test data only, not the Coach/School/Fee management structure.
+ // Coaches, feeStructure, silambanFees, and referees are intentionally
+ // excluded - Delete All resets transactional/test data and the schools
+ // (plus the coach-school links and fee requests that point at them).
  const collectionsToClear = [
  "students",
  "batches",
  "beltTests",
  "programs",
  "branches",
+ "schools",
+ "coachSchools",
+ "schoolFeeRequests",
  "settings"
  ];
  
