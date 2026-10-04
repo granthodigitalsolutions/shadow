@@ -1,5 +1,6 @@
 import { RouterProvider, createBrowserRouter, Navigate, Outlet, useNavigate, useParams, useLocation } from "react-router-dom";
 import { useState, lazy, Suspense, useEffect } from "react";
+import AppLoader from "./components/ui/AppLoader";
 import { ThemeProvider } from "next-themes";
 import WebLayout from "./components/layout/WebLayout";
 import LandingPage from "./components/pages/LandingPage";
@@ -104,14 +105,7 @@ const ExaminerScoring          = lazyWithRetry(() => import("./components/examin
 const ExaminerProtectedRoute   = lazyWithRetry(() => import("./components/examiner/ExaminerProtectedRoute"));
 
 // ── Shared loading fallback ─────────────────────────────────────────────────
-const PageLoader = () => (
-  <div className="flex items-center justify-center min-h-screen bg-gray-50">
-    <div className="text-center">
-      <div className="w-16 h-16 border-4 border-yellow-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-      <p className="text-gray-600">Loading…</p>
-    </div>
-  </div>
-);
+const PageLoader = AppLoader;
 
 // ── Redirect helper for old admin URLs ─────────────────────────────────────
 function RedirectToKarate({ path }: { path: string }) {

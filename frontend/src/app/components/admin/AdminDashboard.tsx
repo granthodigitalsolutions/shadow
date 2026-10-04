@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from "react";
+import AppLoader from "../ui/AppLoader";
 import {
   Users, DollarSign, CheckCircle, XCircle, CreditCard, FileText,
  Clock, QrCode, Calendar, Bell, ClipboardList, UserCheck
@@ -134,18 +135,7 @@ export default function AdminDashboard() {
  );
  }
 
- if (loading) {
- return (
- <AdminLayout>
- <div className="flex items-center justify-center min-h-[60vh]">
- <div className="text-center">
- <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
- <p className="text-gray-600 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400">Loading dashboard...</p>
- </div>
- </div>
- </AdminLayout>
- );
- }
+ if (loading) return <AppLoader />;
 
  if (!activeBeltTest) {
  const programName = currentProgram === 'KARATE' ? 'Karate Belt Test' : currentProgram === 'SELAMBAM' ? 'Selambam Stage Test' : 'Test';

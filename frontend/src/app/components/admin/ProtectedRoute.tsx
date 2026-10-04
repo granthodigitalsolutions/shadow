@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AppLoader from "../ui/AppLoader";
 import { Navigate } from "react-router-dom";
 import { firebaseAuthService } from "../../services/firebaseAuth";
 import { firebaseAdminAuthService } from "../../services/firebaseData";
@@ -30,16 +31,7 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
  return () => unsubscribe();
  }, []);
 
- if (loading) {
- return (
- <div className="min-h-screen flex items-center justify-center">
- <div className="text-center">
- <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
- <p className="text-gray-600 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400">Loading...</p>
- </div>
- </div>
- );
- }
+ if (loading) return <AppLoader />;
 
  if (status === "unauthorized") {
    return <Navigate to="/admin/login" replace />;
