@@ -269,23 +269,18 @@ export default function BatchMonitoringDashboard() {
                     <p className="text-2xl font-bold text-zinc-900 dark:text-white mt-0.5">{r.beltLabel}</p>
                   </div>
 
-                  <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <dl className="grid grid-cols-2 gap-3">
                     {[
                       ["Total Capacity", r.capacity, "text-zinc-900 dark:text-white"],
                       ["Allocated Slots", r.allocated, "text-zinc-900 dark:text-white"],
                       ["Students Assigned", r.assigned, "text-blue-600 dark:text-blue-400"],
                       ["Unfilled Allocated", r.unfilledAllocated, "text-amber-600 dark:text-amber-400"],
-                      ["Available Pool", r.availablePool, "text-emerald-600 dark:text-emerald-400"],
                     ].map(([label, value, tone]) => (
                       <div key={label as string} className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-3 py-3">
                         <dt className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{label}</dt>
                         <dd className={`text-3xl font-bold mt-0.5 ${tone}`}>{value}</dd>
                       </div>
                     ))}
-                    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-3 py-3">
-                      <dt className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Exam Date</dt>
-                      <dd className="text-base font-bold mt-1.5 text-zinc-900 dark:text-white">{r.examDate ? fmtDate(r.examDate) : "Not set"}</dd>
-                    </div>
                   </dl>
 
                   <div>

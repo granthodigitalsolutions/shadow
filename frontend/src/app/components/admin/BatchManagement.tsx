@@ -11,6 +11,7 @@ import { useProgram } from "../../contexts/ProgramContext";
 import { formatBatchName, batchQrUrl } from "../../utils/batchFormatters";
 import { completeAdminBatch } from "../../services/adminPaymentsApi";
 import { filterEligibleStudents } from "../../utils/batchEligibility";
+import { useExamTransitions } from "../../hooks/useExamTransitions";
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; icon: typeof Clock }> = {
  waiting: { label: "Waiting", bg: "bg-zinc-100 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400", icon: Clock },
@@ -19,10 +20,7 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; icon: typeof Cl
  completed: { label: "Completed", bg: "bg-green-100 text-green-700", icon: CheckCircle },
 };
 
-// Static belt/stage lists for the Generate Batch modal — matches
-// StickerPrinting.tsx exactly (BeltTest.belts is never actually populated).
-const KARATE_BELTS = ['White', 'Yellow', 'Orange', 'Blue', 'Green', 'II Brown', 'I Brown', 'Black Belt'];
-const SILAMBAM_BELTS = Array.from({ length: 8 }, (_, i) => `Stage ${i + 1}`);
+
 
 export default function BatchManagement() {
  const { schoolId } = useParams();
@@ -51,6 +49,13 @@ export default function BatchManagement() {
  // the old manual Create Batches flow (Half B, Phase 4) is gone ---
  const [allStudents, setAllStudents] = useState<StudentRecord[]>([]);
  const [showGenerateModal, setShowGenerateModal] = useState(false);
+ const { karate: karateT, silambam: silambamT } = useExamTransitions();
+ // School the batches are generated for. Defaults to the page's school; the
+ // admin can pick any active school (or Individual) in the modal.
+ const [generateSchoolId, setGenerateSchoolId] = useState("");
+ const [generateSchools, setGenerateSchools] = useState<School[]>([]);
+ const genSchoolId = generateSchoolId || targetSchoolId || "";
+ const genIsIndividual = genSchoolId === "individual";
  const [generateForm, setGenerateForm] = useState({ beltTestId: "", belt: "" });
  const [generating, setGenerating] = useState(false);
  const [generatedResult, setGeneratedResult] = useState<Batch | null>(null);
@@ -165,35 +170,64 @@ export default function BatchManagement() {
 
  // --- Generate Batch (Phase 3) ---
  const generateSelectedTest = beltTests.find((t) => t.id === generateForm.beltTestId);
- const generateBeltOptions = generateSelectedTest?.programType === "SELAMBAM" ? SILAMBAM_BELTS : KARATE_BELTS;
+ const generateProgram: "KARATE" | "SELAMBAM" =
+ generateSelectedTest?.programType ?? (currentProgram === "SELAMBAM" ? "SELAMBAM" : "KARATE");
+
+ // Belt/stage options come from the configured transitions (same source as
+ // registration). `value` is what a student record stores (Karate: the target
+ // belt; Silambam: the stage number), so eligibility matching is exact. The old
+ // hardcoded "Stage 1..8" list never matched stored values like "2", which is
+ // why Silambam always showed 0 eligible students.
+ const generateBeltOptions = useMemo(() => {
+ const configured = (generateProgram === "KARATE" ? karateT : silambamT).map((t) => ({
+ value: generateProgram === "KARATE" ? t.to : String(t.stageNumber),
+ label: t.label,
+ }));
+ // Students registered for a level that is not a configured transition (e.g. the
+ // initial Silambam stage) can still be batched: offer exactly the levels they hold.
+ const known = new Set(configured.map((o) => o.value));
+ const extra = new Set<string>();
+ allStudents.forEach((s) => {
+ if (s.beltTestId !== generateForm.beltTestId || s.paymentStatus !== "verified" || s.batchId !== null) return;
+ if ((s.programType || "KARATE") !== generateProgram) return;
+ const v = s.beltLevel || s.stageLevel?.toString();
+ if (v && !known.has(v)) extra.add(v);
+ });
+ return [
+ ...configured,
+ ...[...extra].sort().map((v) => ({ value: v, label: generateProgram === "SELAMBAM" && /^\d+$/.test(v) ? `Stage ${v}` : v })),
+ ];
+ }, [generateProgram, karateT, silambamT, allStudents, generateForm.beltTestId]);
+ const beltLabelOf = (value: string) => generateBeltOptions.find((o) => o.value === value)?.label || value;
+
 
  const eligibleStudentsForGenerate = useMemo(() => {
- if (!targetSchoolId || !generateForm.beltTestId || !generateForm.belt) return [];
+ if (!genSchoolId || !generateForm.beltTestId || !generateForm.belt) return [];
  return filterEligibleStudents(allStudents, {
- targetSchoolId,
- isIndividual,
+ targetSchoolId: genSchoolId,
+ isIndividual: genIsIndividual,
  beltTestId: generateForm.beltTestId,
  belt: generateForm.belt,
  });
- }, [allStudents, targetSchoolId, isIndividual, generateForm.beltTestId, generateForm.belt]);
+ }, [allStudents, genSchoolId, genIsIndividual, generateForm.beltTestId, generateForm.belt]);
 
  // Eligible students per Belt/Stage for the selected test, using the same
  // belt/stage list and the same filterEligibleStudents() as Selective Generate.
  // Students already in a batch are never eligible, which is what stops a second
  // "Generate All" from duplicating batches.
  const allModeGroups = useMemo(() => {
- if (!targetSchoolId || !generateForm.beltTestId) return [];
- return generateBeltOptions.map((belt) => ({
+ if (!genSchoolId || !generateForm.beltTestId) return [];
+ return generateBeltOptions.map(({ value: belt }) => ({
  belt,
  count: filterEligibleStudents(allStudents, {
- targetSchoolId,
- isIndividual,
+ targetSchoolId: genSchoolId,
+ isIndividual: genIsIndividual,
  beltTestId: generateForm.beltTestId,
  belt,
  }).length,
  }));
  // eslint-disable-next-line react-hooks/exhaustive-deps
- }, [allStudents, targetSchoolId, isIndividual, generateForm.beltTestId, generateSelectedTest?.programType]);
+ }, [allStudents, genSchoolId, genIsIndividual, generateForm.beltTestId, generateSelectedTest?.programType]);
  const allModeEligible = allModeGroups.filter((g) => g.count > 0);
  const allModeTotal = allModeEligible.reduce((sum, g) => sum + g.count, 0);
 
@@ -218,7 +252,9 @@ export default function BatchManagement() {
 
  const openGenerateModal = (mode: "all" | "selective") => {
  setGenerateMode(mode);
+ setGenerateSchoolId(targetSchoolId || "");
  setShowGenerateModal(true);
+ firebaseSchoolService.getActive(currentProgram === "ALL" ? undefined : (currentProgram as any)).then(setGenerateSchools).catch(() => setGenerateSchools([]));
  refreshStudents();
  };
 
@@ -228,7 +264,7 @@ export default function BatchManagement() {
  // re-reads fresh data, so batch numbers increment correctly). Belts with no
  // eligible students are skipped; one belt failing doesn't stop the rest.
  const handleGenerateAll = async () => {
- if (!targetSchoolId || !generateForm.beltTestId) {
+ if (!genSchoolId || !generateForm.beltTestId) {
  showToast("Please select a belt test", "error");
  return;
  }
@@ -239,17 +275,17 @@ export default function BatchManagement() {
  const freshStudents = await firebaseStudentService.getAll(programFilter);
  setAllStudents(freshStudents);
 
- const groups = generateBeltOptions.map((belt) => ({
+ const groups = generateBeltOptions.map(({ value: belt }) => ({
  belt,
  count: filterEligibleStudents(freshStudents, {
- targetSchoolId,
- isIndividual,
+ targetSchoolId: genSchoolId,
+ isIndividual: genIsIndividual,
  beltTestId: generateForm.beltTestId,
  belt,
  }).length,
  }));
  const toGenerate = groups.filter((g) => g.count > 0);
- const skipped = groups.filter((g) => g.count === 0).map((g) => g.belt);
+ const skipped = groups.filter((g) => g.count === 0).map((g) => beltLabelOf(g.belt));
  if (toGenerate.length === 0) {
  showToast("No eligible students found", "error");
  return;
@@ -262,8 +298,8 @@ export default function BatchManagement() {
  for (const group of toGenerate) {
  try {
  const batch = await firebaseBatchService.generateBatch({
- schoolId: targetSchoolId,
- isIndividual,
+ schoolId: genSchoolId,
+ isIndividual: genIsIndividual,
  beltTestId: generateForm.beltTestId,
  belt: group.belt,
  programType,
@@ -301,7 +337,7 @@ export default function BatchManagement() {
  };
 
  const handleGenerateBatch = async () => {
- if (!targetSchoolId || !generateForm.beltTestId || !generateForm.belt) {
+ if (!genSchoolId || !generateForm.beltTestId || !generateForm.belt) {
  showToast("Please select a belt test and belt", "error");
  return;
  }
@@ -312,8 +348,8 @@ export default function BatchManagement() {
  setGenerating(true);
  try {
  const newBatch = await firebaseBatchService.generateBatch({
- schoolId: targetSchoolId,
- isIndividual,
+ schoolId: genSchoolId,
+ isIndividual: genIsIndividual,
  beltTestId: generateForm.beltTestId,
  belt: generateForm.belt,
  programType: generateSelectedTest?.programType ?? (currentProgram === "SELAMBAM" ? "SELAMBAM" : "KARATE"),
@@ -723,6 +759,21 @@ export default function BatchManagement() {
  : "Instantly creates one new batch of empty badge slots, sized to the number of currently-eligible students for the selected Belt Test and Belt, along with a unique batch code and QR code. Students are assigned one at a time as the examiner scans them in."}
  </p>
  <div>
+ <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">School *</label>
+ <select
+ value={genSchoolId}
+ onChange={e => { setGenerateSchoolId(e.target.value); setGenerateForm(p => ({ ...p, belt: "" })); }}
+ disabled={generating}
+ className="w-full px-4 py-2.5 border border-zinc-200 dark:border-zinc-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium bg-white dark:bg-zinc-950 text-gray-900 dark:text-zinc-50 disabled:opacity-50"
+ >
+ <option value="individual">Individual students</option>
+ {generateSchools.map(sc => <option key={sc.id} value={sc.id}>{sc.branch ? `${sc.name} - ${sc.branch}` : sc.name}</option>)}
+ {genSchoolId && genSchoolId !== "individual" && !generateSchools.some(sc => sc.id === genSchoolId) && (
+ <option value={genSchoolId}>{school ? school.name : "Selected school"}</option>
+ )}
+ </select>
+ </div>
+ <div>
  <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Belt / Stage Test *</label>
  <select value={generateForm.beltTestId} onChange={e => setGenerateForm(p => ({ ...p, beltTestId: e.target.value, belt: "" }))} className="w-full px-4 py-2.5 bg-zinc-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium bg-white dark:bg-zinc-950 dark:bg-zinc-900 text-gray-900 dark:text-zinc-50 dark:text-zinc-50 bg-transparent dark:bg-zinc-900 dark:text-zinc-50">
  <option value="">Select Test...</option>
@@ -734,7 +785,7 @@ export default function BatchManagement() {
  <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Belt / Stage *</label>
  <select value={generateForm.belt} onChange={e => setGenerateForm(p => ({ ...p, belt: e.target.value }))} disabled={!generateForm.beltTestId} className="w-full px-4 py-2.5 bg-zinc-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium bg-white dark:bg-zinc-950 dark:bg-zinc-900 text-gray-900 dark:text-zinc-50 dark:text-zinc-50 bg-transparent dark:bg-zinc-900 dark:text-zinc-50 disabled:opacity-50 disabled:cursor-not-allowed">
  <option value="">Select Belt...</option>
- {generateBeltOptions.map(b => <option key={b} value={b}>{b}</option>)}
+ {generateBeltOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
  </select>
  </div>
  )}
@@ -759,7 +810,7 @@ export default function BatchManagement() {
  <ul className="border-t border-indigo-100 divide-y divide-indigo-100 bg-white/60 max-h-[220px] overflow-y-auto">
  {allModeEligible.map(g => (
  <li key={g.belt} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
- <span className="font-semibold text-indigo-900">{g.belt}</span>
+ <span className="font-semibold text-indigo-900">{beltLabelOf(g.belt)}</span>
  <span className="font-bold text-indigo-700">{g.count} student{g.count === 1 ? '' : 's'}</span>
  </li>
  ))}
@@ -809,7 +860,7 @@ export default function BatchManagement() {
  <QRCodeSVG value={batchQrUrl(batch.code || "", batch.id)} size={48} style={{ width: '48px', height: '48px' }} level="M" includeMargin={false} />
  </div>
  <div className="flex-1 min-w-0">
- <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider truncate">{belt} &middot; {batch.maxSize} slot{batch.maxSize === 1 ? '' : 's'}</p>
+ <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider truncate">{beltLabelOf(belt)} &middot; {batch.maxSize} slot{batch.maxSize === 1 ? '' : 's'}</p>
  <p className="text-lg font-bold text-indigo-900 tracking-widest">{batch.code}</p>
  </div>
  <button onClick={() => handleCopyBatchCode(batch.code)} className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-800 px-3 py-1.5 bg-white rounded-lg border border-indigo-200 whitespace-nowrap">
@@ -821,7 +872,7 @@ export default function BatchManagement() {
  {generatedAllResult.failed.length > 0 && (
  <div className="p-3 rounded-xl bg-red-50 border border-red-100 text-xs font-medium text-red-700 space-y-1">
  {generatedAllResult.failed.map(f => (
- <p key={f.belt}><span className="font-bold">{f.belt}:</span> {f.message}</p>
+ <p key={f.belt}><span className="font-bold">{beltLabelOf(f.belt)}:</span> {f.message}</p>
  ))}
  </div>
  )}
