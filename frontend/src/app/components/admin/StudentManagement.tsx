@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Search, Edit, Award, ClipboardList, Download, FileSpreadsheet, X, Save, Filter, ChevronDown, User, UserCircle, School, Trash2, Phone } from "lucide-react";
+import { Search, Edit, Award, ClipboardList, Download, FileSpreadsheet, X, Save, Filter, ChevronDown, User, UserCircle, School, Trash2, Phone, UserPlus } from "lucide-react";
 import { firebaseStudentService } from "../../services/firebaseData";
 import AdminLayout from "./AdminLayout";
 import * as XLSX from 'xlsx';
@@ -8,6 +8,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useToast } from "../../hooks/useToast";
 import { useProgram } from "../../contexts/ProgramContext";
+import AdminAddStudentModal from "./AdminAddStudentModal";
 import { useExamTransitions } from "../../hooks/useExamTransitions";
 import { resolveStudentTransition, transitionFilterOptions } from "../../utils/examTransitions";
 
@@ -55,6 +56,7 @@ export default function StudentManagement() {
  const [loading, setLoading] = useState(true);
 
  // Edit Modal
+ const [showAddStudent, setShowAddStudent] = useState(false);
  const [editingStudent, setEditingStudent] = useState<any>(null);
  const [editForm, setEditForm] = useState({
  name: "", gender: "", school: "", standard: "", contact: "", whatsapp: "",
@@ -272,6 +274,9 @@ export default function StudentManagement() {
  <p className="text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 text-sm mt-1">Manage, filter, and review all registered students.</p>
  </div>
  <div className="flex gap-2 w-full md:w-auto">
+ <button onClick={() => setShowAddStudent(true)} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-zinc-950 font-bold rounded-xl text-sm transition-colors">
+ <UserPlus className="w-4 h-4" /> Add Student
+ </button>
  <button onClick={exportToExcel} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 dark:text-zinc-300 rounded-xl hover:bg-zinc-50 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:bg-zinc-900 dark:bg-zinc-900 shadow-sm dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 dark:shadow-none dark:border dark:border-zinc-800 font-semibold transition-colors">
  <FileSpreadsheet className="w-4 h-4 text-green-600" /> Export XLS
  </button>
@@ -471,6 +476,14 @@ export default function StudentManagement() {
  </div>
  </div>
  </div>
+
+ {showAddStudent && (
+ <AdminAddStudentModal
+ currentProgram={currentProgram as any}
+ onClose={() => setShowAddStudent(false)}
+ onCreated={(n) => showToast(`${n} added`, "success")}
+ />
+ )}
 
  {/* Edit Modal (Streamlined) */}
  {editingStudent && (
