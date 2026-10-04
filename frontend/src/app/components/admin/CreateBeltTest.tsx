@@ -17,10 +17,6 @@ export default function CreateBeltTest() {
  const [name, setName] = useState("");
  const [date, setDate] = useState("");
  const [time, setTime] = useState("");
- const [venue, setVenue] = useState("");
- const [locationAddress, setLocationAddress] = useState("");
- const [registrationStartDate, setRegistrationStartDate] = useState("");
- const [registrationEndDate, setRegistrationEndDate] = useState("");
  const [isActive, setIsActive] = useState(true);
  const [saving, setSaving] = useState(false);
 
@@ -46,15 +42,6 @@ export default function CreateBeltTest() {
  await showAlert({
  title: "Missing Details",
  message: "Please fill in all required fields: name, date, and time.",
- variant: "warning",
- });
- return;
- }
-
- if (registrationStartDate && registrationEndDate && new Date(registrationStartDate) > new Date(registrationEndDate)) {
- await showAlert({
- title: "Invalid Dates",
- message: "Registration End Date cannot be before the Start Date.",
  variant: "warning",
  });
  return;
@@ -88,12 +75,6 @@ export default function CreateBeltTest() {
  updatedAt: new Date().toISOString(),
  };
  
- // Handle optional fields explicitly to avoid undefined crashing Firestore
- if (venue.trim()) payload.venue = venue.trim();
- if (locationAddress.trim()) payload.locationAddress = locationAddress.trim();
- if (registrationStartDate) payload.registrationStartDate = registrationStartDate;
- if (registrationEndDate) payload.registrationEndDate = registrationEndDate;
-
  await firebaseBeltTestService.create(payload as any);
 
  showToast("Test created successfully!", "success");
@@ -178,61 +159,6 @@ export default function CreateBeltTest() {
  onChange={(e) => setTime(e.target.value)}
  className="w-full px-4 py-3 border-2 border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-xl focus:border-blue-500 focus:outline-none font-semibold text-zinc-900 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
  required
- />
- </div>
- </div>
-
- {/* Venue */}
- <div>
- <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-1.5">
- Venue (Optional)
- </label>
- <input
- type="text"
- value={venue}
- onChange={(e) => setVenue(e.target.value)}
- className="w-full px-4 py-3 border-2 border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-xl focus:border-blue-500 focus:outline-none font-semibold text-zinc-900 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
- placeholder="e.g., Main Hall, Sports Complex"
- />
- </div>
-
- {/* Location Address */}
- <div>
-   <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">
-     Full Location Address *
-   </label>
-   <textarea
-     value={locationAddress}
-     onChange={(e) => setLocationAddress(e.target.value)}
-     className="w-full px-4 py-3 border-2 border-zinc-200 dark:border-zinc-800 rounded-xl focus:border-blue-500 focus:outline-none font-semibold text-zinc-900 dark:text-zinc-50 bg-transparent dark:bg-zinc-900"
-     placeholder="e.g., Shadow Kai Karate Academy, Coimbatore, Tamil Nadu"
-     rows={2}
-     required
-   />
- </div>
-
- {/* Registration Dates */}
- <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
- <div>
- <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-1.5">
- Registration Start Date (Optional)
- </label>
- <input
- type="date"
- value={registrationStartDate}
- onChange={(e) => setRegistrationStartDate(e.target.value)}
- className="w-full px-4 py-3 border-2 border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-xl focus:border-blue-500 focus:outline-none font-semibold text-zinc-900 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
- />
- </div>
- <div>
- <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-1.5">
- Registration End Date (Optional)
- </label>
- <input
- type="date"
- value={registrationEndDate}
- onChange={(e) => setRegistrationEndDate(e.target.value)}
- className="w-full px-4 py-3 border-2 border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-xl focus:border-blue-500 focus:outline-none font-semibold text-zinc-900 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
  />
  </div>
  </div>
