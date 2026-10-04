@@ -208,6 +208,9 @@ export default function FeeStructure() {
 
  // Silambam
  const [silamFees, setSilamFees] = useState<SilambanFeeStructure[]>([]);
+ // Stage 1 is the initial stage, not a promotion, so it is not shown or priced here.
+ // Its record is kept untouched in the database for existing registrations.
+ const promotionStages = [...silamFees].sort((a, b) => (a.order || 0) - (b.order || 0)).slice(1);
  const [silamLoading, setSilamLoading] = useState(true);
 
  // Edit state
@@ -505,7 +508,7 @@ export default function FeeStructure() {
  <div className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold border-b-2 border-green-600 text-green-700 mb-6 mt-12">
  <Trophy className="w-4 h-4" /> Silambam · Stage Fees
  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-100 text-green-700">
- {silamFees.length}
+ {promotionStages.length}
  </span>
  </div>
  )}
@@ -532,7 +535,7 @@ export default function FeeStructure() {
  {silamLoading ? <LoadingSpinner color="green" /> : (
  <>
  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
- {silamFees.map((fee) => {
+ {promotionStages.map((fee) => {
  const palette = sc(fee.order);
  const isEditing = editing === fee.id;
  return (
@@ -624,14 +627,11 @@ export default function FeeStructure() {
  {fee.stageName}
  </p>
  {(() => {
- // The first stage is the initial stage, not a promotion: it is not offered in registration.
  const ordered = [...silamFees].sort((a, b) => (a.order || 0) - (b.order || 0));
  const idx = ordered.findIndex((f) => f.id === fee.id);
- return idx <= 0 ? (
- <p className="text-[11px] font-semibold text-center text-gray-500 dark:text-zinc-400">Initial stage - not a promotion fee (kept for existing registrations)</p>
- ) : (
+ return idx > 0 ? (
  <p className="text-[11px] font-semibold text-center text-gray-600 dark:text-zinc-300">Promotion: {ordered[idx - 1].stageName} → {fee.stageName}</p>
- );
+ ) : null;
  })()}
  <p className="text-2xl font-bold" style={{ color: palette.color }}>
  ₹{fee.fee.toLocaleString()}
@@ -690,7 +690,7 @@ export default function FeeStructure() {
  ) : currentProgram === "SELAMBAM" ? (
  <>
  <InfoPanel color="green" title="Fee Inclusions (Silambam)" items={["✓ Stage examination charges", "✓ Official Silambam certificate", "✓ Stage progression recognition", "✓ Registration processing fee"]} />
- <SummaryPanel color="green" title="Current Stage Fees" items={silamFees.map(f => ({ label: f.stageName, value: `₹${f.fee.toLocaleString()}`, hidden: f.active === false }))} />
+ <SummaryPanel color="green" title="Current Stage Fees" items={promotionStages.map(f => ({ label: f.stageName, value: `₹${f.fee.toLocaleString()}`, hidden: f.active === false }))} />
  </>
  ) : (
  <>
