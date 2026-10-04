@@ -12,6 +12,7 @@ import { formatBatchName, batchQrUrl } from "../../utils/batchFormatters";
 import { completeAdminBatch } from "../../services/adminPaymentsApi";
 import { filterEligibleStudents } from "../../utils/batchEligibility";
 import { useExamTransitions } from "../../hooks/useExamTransitions";
+import { planCapacity } from "../../utils/batchIdentity";
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; icon: typeof Clock }> = {
  waiting: { label: "Waiting", bg: "bg-zinc-100 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400", icon: Clock },
@@ -214,19 +215,35 @@ export default function BatchManagement() {
  // belt/stage list and the same filterEligibleStudents() as Selective Generate.
  // Students already in a batch are never eligible, which is what stops a second
  // "Generate All" from duplicating batches.
+ // What generating would actually do for a belt/stage: create its batch, raise the
+ // capacity of the batch that already exists (only when more students are now
+ // eligible than it has room for), or nothing at all.
+ const planForBelt = (belt: string, count: number): { action: "create" | "increase" | "none"; current: number; next: number; completed?: boolean } => {
+ const existing = batches
+ .filter((b) => b.beltTestId === generateForm.beltTestId && b.belt === belt && !(b as any).isDeleted && (b.programType || generateProgram) === generateProgram)
+ .sort((a, b) => (b.batchNumber || 0) - (a.batchNumber || 0))[0];
+ if (!existing) return { action: count > 0 ? "create" : "none", current: 0, next: count };
+ if (existing.status === "completed") return { action: "none", current: existing.maxSize, next: existing.maxSize, completed: true };
+ const plan = planCapacity(existing as any, count);
+ return { action: plan.outcome === "updated" ? "increase" : "none", current: existing.maxSize, next: plan.newCapacity };
+ };
+
  const allModeGroups = useMemo(() => {
  if (!genSchoolId || !generateForm.beltTestId) return [];
- return generateBeltOptions.map(({ value: belt }) => ({
- belt,
- count: filterEligibleStudents(allStudents, {
+ return generateBeltOptions.map(({ value: belt }) => {
+ const count = filterEligibleStudents(allStudents, {
  targetSchoolId: genSchoolId,
  isIndividual: genIsIndividual,
  beltTestId: generateForm.beltTestId,
  belt,
- }).length,
- }));
+ }).length;
+ return { belt, count, ...planForBelt(belt, count) };
+ });
  // eslint-disable-next-line react-hooks/exhaustive-deps
- }, [allStudents, genSchoolId, genIsIndividual, generateForm.beltTestId, generateSelectedTest?.programType]);
+ }, [allStudents, batches, genSchoolId, genIsIndividual, generateForm.beltTestId, generateSelectedTest?.programType, generateBeltOptions]);
+ // Levels with an existing, up-to-date batch (or no students) need no action.
+ const allModeChanges = allModeGroups.filter((g) => g.action !== "none");
+ const selectivePlan = generateForm.belt ? planForBelt(generateForm.belt, eligibleStudentsForGenerate.length) : null;
  const allModeEligible = allModeGroups.filter((g) => g.count > 0);
  const allModeTotal = allModeEligible.reduce((sum, g) => sum + g.count, 0);
 
@@ -284,10 +301,10 @@ export default function BatchManagement() {
  belt,
  }).length,
  }));
- const toGenerate = groups.filter((g) => g.count > 0);
- const skipped = groups.filter((g) => g.count === 0).map((g) => beltLabelOf(g.belt));
+ const toGenerate = groups.filter((g) => g.count > 0 && planForBelt(g.belt, g.count).action !== "none");
+ const skipped = groups.filter((g) => !toGenerate.includes(g)).map((g) => beltLabelOf(g.belt));
  if (toGenerate.length === 0) {
- showToast("No eligible students found", "error");
+ showToast("Everything is already up to date - nothing to generate", "info");
  return;
  }
 
@@ -779,7 +796,11 @@ export default function BatchManagement() {
  <div className="flex items-center justify-between gap-3 p-4 bg-indigo-50 rounded-xl border border-indigo-100">
  <span className="text-sm font-bold text-indigo-900">Eligible Students</span>
  <span className="px-3 py-1 bg-white rounded-lg text-indigo-700 font-bold text-sm border border-indigo-200">
- {generateForm.beltTestId && generateForm.belt ? `${eligibleStudentsForGenerate.length} students eligible` : '—'}
+ {generateForm.beltTestId && generateForm.belt
+ ? (selectivePlan?.action === "increase" ? `Capacity ${selectivePlan.current} → ${selectivePlan.next}`
+ : selectivePlan?.action === "none" ? (selectivePlan.completed ? "Completed" : `Up to date · ${selectivePlan.current} slots`)
+ : `${eligibleStudentsForGenerate.length} students eligible`)
+ : '—'}
  </span>
  </div>
  ) : (
@@ -788,7 +809,7 @@ export default function BatchManagement() {
  <span className="text-sm font-bold text-indigo-900">Eligible Students</span>
  <span className="px-3 py-1 bg-white rounded-lg text-indigo-700 font-bold text-sm border border-indigo-200">
  {generateForm.beltTestId
- ? `${allModeTotal} students in ${allModeEligible.length} batch${allModeEligible.length === 1 ? '' : 'es'}`
+ ? (allModeChanges.length === 0 ? "Nothing to update" : `${allModeChanges.length} batch${allModeChanges.length === 1 ? '' : 'es'} to create or update`)
  : '—'}
  </span>
  </div>
@@ -797,13 +818,20 @@ export default function BatchManagement() {
  {allModeEligible.map(g => (
  <li key={g.belt} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
  <span className="font-semibold text-indigo-900">{beltLabelOf(g.belt)}</span>
- <span className="font-bold text-indigo-700">{g.count} student{g.count === 1 ? '' : 's'}</span>
+ <span className={`font-bold text-right ${g.action === "none" ? "text-zinc-400" : "text-indigo-700"}`}>
+ {g.action === "create" ? `New batch · ${g.count} student${g.count === 1 ? '' : 's'}`
+ : g.action === "increase" ? `Capacity ${g.current} → ${g.next}`
+ : g.completed ? "Completed" : `Up to date · ${g.current} slots`}
+ </span>
  </li>
  ))}
  </ul>
  )}
  {generateForm.beltTestId && allModeEligible.length === 0 && (
  <p className="px-4 pb-4 text-xs font-semibold text-indigo-500">No Belt / Stage has eligible students for this test.</p>
+ )}
+ {generateForm.beltTestId && allModeEligible.length > 0 && allModeChanges.length === 0 && (
+ <p className="px-4 py-2 border-t border-indigo-100 text-[11px] font-semibold text-indigo-500">All batches are up to date. New students who become eligible will enable this button.</p>
  )}
  {generateForm.beltTestId && allModeEligible.length > 0 && allModeGroups.length > allModeEligible.length && (
  <p className="px-4 py-2 border-t border-indigo-100 text-[11px] font-semibold text-indigo-500">
@@ -821,12 +849,12 @@ export default function BatchManagement() {
  <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 border-t border-zinc-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 flex justify-end gap-3">
  <button onClick={closeGenerateModal} disabled={generating} className="px-5 py-2.5 text-sm font-bold text-zinc-600 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white dark:text-zinc-50 dark:hover:text-white dark:text-zinc-50 dark:hover:text-white dark:text-zinc-50 dark:text-zinc-50 transition-colors">Cancel</button>
  {generateMode === "all" ? (
- <button onClick={handleGenerateAll} disabled={generating || !generateForm.beltTestId || allModeEligible.length === 0} className="px-5 py-2.5 text-sm font-bold bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl shadow-sm dark:shadow-none dark:border dark:border-zinc-800 transition-colors flex items-center gap-2 disabled:opacity-50">
+ <button onClick={handleGenerateAll} disabled={generating || !generateForm.beltTestId || allModeChanges.length === 0} className="px-5 py-2.5 text-sm font-bold bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl shadow-sm dark:shadow-none dark:border dark:border-zinc-800 transition-colors flex items-center gap-2 disabled:opacity-50">
  {generating ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/> : <Layers className="w-4 h-4"/>}
  Generate All Batches
  </button>
  ) : (
- <button onClick={handleGenerateBatch} disabled={generating || !generateForm.beltTestId || !generateForm.belt || eligibleStudentsForGenerate.length === 0} className="px-5 py-2.5 text-sm font-bold bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl shadow-sm dark:shadow-none dark:border dark:border-zinc-800 transition-colors flex items-center gap-2 disabled:opacity-50">
+ <button onClick={handleGenerateBatch} disabled={generating || !generateForm.beltTestId || !generateForm.belt || !selectivePlan || selectivePlan.action === "none"} className="px-5 py-2.5 text-sm font-bold bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl shadow-sm dark:shadow-none dark:border dark:border-zinc-800 transition-colors flex items-center gap-2 disabled:opacity-50">
  {generating ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/> : <Wand2 className="w-4 h-4"/>}
  Generate Batch
  </button>
