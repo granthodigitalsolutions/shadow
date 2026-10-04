@@ -18,6 +18,16 @@ export interface ResultsReportRow {
   percentage: string;
   grade: string;
   rank: string;
+  /** Detailed assessment (examiner-entered, exactly as saved; "\u2014" when unavailable). */
+  coach: string;
+  exam: string;
+  transition: string;
+  technicalLesson: string;
+  technicalScore: string;
+  athleticLesson: string;
+  athleticScore: string;
+  /** Technical + Athletic as saved don't add up to the saved total (shown, flagged, never "fixed"). */
+  totalMismatch?: boolean;
 }
 
 export interface ResultsReportSummary {
@@ -41,6 +51,8 @@ export interface ResultsReportOptions {
   /** Hide columns that are redundant for the report's scope. */
   showSchoolColumn?: boolean;
   showBatchColumn?: boolean;
+  /** Hide the Coach column (e.g. when a single coach is filtered). */
+  showCoachColumn?: boolean;
 }
 
 // Landscape A4 so the full result table fits without shrinking the type.
@@ -96,7 +108,7 @@ function drawSummaryTiles(doc: jsPDF, summary: ResultsReportSummary, y: number):
  * the brand band + table header repeated and "Page X of Y" on every page.
  */
 export function buildResultsReportPdf(opts: ResultsReportOptions): jsPDF {
-  const { title, scopeLabel, details = [], summary, rows, showSchoolColumn = true, showBatchColumn = true } = opts;
+  const { title, scopeLabel, details = [], summary, rows, showSchoolColumn = true, showCoachColumn = true } = opts;
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
   const generatedAt = new Date().toLocaleString();
 
@@ -127,20 +139,22 @@ export function buildResultsReportPdf(opts: ResultsReportOptions): jsPDF {
 
   // ── Results table ──────────────────────────────────────────────────────────
   type Col = { header: string; get: (r: ResultsReportRow, i: number) => string; width?: number; align?: 'center' | 'left'; key: string };
+  // Widths (mm) on landscape A4 (273mm usable): Name and School take what is left.
   const columns: Col[] = [
-    { key: 'no', header: '#', get: (_r, i) => String(i + 1), width: 9, align: 'center' },
-    { key: 'id', header: 'Student ID', get: (r) => r.studentId, width: 32 },
-    { key: 'name', header: 'Name', get: (r) => r.name },
-    { key: 'gender', header: 'Gender', get: (r) => r.gender, width: 15 },
+    { key: 'no', header: '#', get: (_r, i) => String(i + 1), width: 8, align: 'center' },
+    { key: 'id', header: 'Student ID', get: (r) => r.studentId, width: 29 },
+    { key: 'name', header: 'Student Name', get: (r) => r.name },
     ...(showSchoolColumn ? [{ key: 'school', header: 'School', get: (r: ResultsReportRow) => r.school } as Col] : []),
-    { key: 'std', header: 'Std', get: (r) => r.standard, width: 21, align: 'center' },
-    { key: 'belt', header: 'Belt/Stage', get: (r) => r.beltStage, width: 22 },
-    ...(showBatchColumn ? [{ key: 'batch', header: 'Batch', get: (r: ResultsReportRow) => r.batch, width: 46 } as Col] : []),
-    { key: 'status', header: 'Status', get: (r) => r.status, width: 20, align: 'center' },
-    { key: 'score', header: 'Score', get: (r) => r.score, width: 14, align: 'center' },
-    { key: 'pct', header: '%', get: (r) => r.percentage, width: 15, align: 'center' },
-    { key: 'grade', header: 'Grade', get: (r) => r.grade, width: 14, align: 'center' },
-    { key: 'rank', header: 'Rank', get: (r) => r.rank, width: 14, align: 'center' },
+    ...(showCoachColumn ? [{ key: 'coach', header: 'Coach', get: (r: ResultsReportRow) => r.coach, width: 25 } as Col] : []),
+    { key: 'exam', header: 'Exam', get: (r) => r.exam, width: 16 },
+    { key: 'transition', header: 'Belt / Stage Transition', get: (r) => r.transition, width: 30 },
+    { key: 'tl', header: 'Technical Lesson No.', get: (r) => r.technicalLesson, width: 17, align: 'center' },
+    { key: 'ts', header: 'Technical Score', get: (r) => r.technicalScore, width: 15, align: 'center' },
+    { key: 'al', header: 'Athletic Lesson No.', get: (r) => r.athleticLesson, width: 17, align: 'center' },
+    { key: 'as', header: 'Athletic Score', get: (r) => r.athleticScore, width: 15, align: 'center' },
+    { key: 'score', header: 'Total Score', get: (r) => (r.totalMismatch ? `${r.score} *` : r.score), width: 14, align: 'center' },
+    { key: 'pct', header: '%', get: (r) => r.percentage, width: 14, align: 'center' },
+    { key: 'status', header: 'Status', get: (r) => r.status, width: 19, align: 'center' },
   ];
 
   const body = rows.length > 0
@@ -163,8 +177,8 @@ export function buildResultsReportPdf(opts: ResultsReportOptions): jsPDF {
     startY: y,
     margin: { top: CONTENT_TOP, left: MARGIN, right: MARGIN, bottom: FOOTER_H },
     theme: 'grid',
-    styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.8, lineColor: PDF_COLORS.border, lineWidth: 0.2, textColor: PDF_COLORS.primary, overflow: 'linebreak', valign: 'middle' },
-    headStyles: { fillColor: PDF_COLORS.primary, textColor: PDF_COLORS.gold, fontStyle: 'bold', fontSize: 8, halign: 'center' },
+    styles: { font: 'helvetica', fontSize: 7.6, cellPadding: 1.6, lineColor: PDF_COLORS.border, lineWidth: 0.2, textColor: PDF_COLORS.primary, overflow: 'linebreak', valign: 'middle' },
+    headStyles: { fillColor: PDF_COLORS.primary, textColor: PDF_COLORS.gold, fontStyle: 'bold', fontSize: 7.4, halign: 'center', valign: 'middle' },
     alternateRowStyles: { fillColor: PDF_COLORS.lightBg },
     columnStyles,
     showHead: 'everyPage',
@@ -188,6 +202,19 @@ export function buildResultsReportPdf(opts: ResultsReportOptions): jsPDF {
       }
     },
   });
+
+  // Note for scores that were saved inconsistently (shown as saved, never altered).
+  const mismatches = rows.filter((r) => r.totalMismatch).length;
+  const notes = [
+    'Scores are shown exactly as saved by the examiner. "-" = not recorded for this student (older records).',
+    ...(mismatches > 0 ? [`* ${mismatches} result(s): Technical + Athletic do not add up to the saved total; the saved total is shown.`] : []),
+  ];
+  let noteY = ((doc as any).lastAutoTable?.finalY ?? y) + 6;
+  if (noteY + notes.length * 4.5 > PAGE_H - FOOTER_H) { doc.addPage(); noteY = CONTENT_TOP + 4; }
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...PDF_COLORS.gray);
+  notes.forEach((n, i) => doc.text(n, MARGIN, noteY + i * 4.5));
 
   // ── Footer on every page (needs the final page count) ──────────────────────
   const totalPages = doc.getNumberOfPages();

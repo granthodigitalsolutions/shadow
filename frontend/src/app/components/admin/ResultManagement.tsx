@@ -11,7 +11,9 @@ import {
  firebaseSchoolService,
  firebaseBatchService,
  firebaseBeltTestService,
+ firebaseCoachService,
 } from "../../services/firebaseData";
+import { extractBreakdown, fmtScore } from "../../utils/resultBreakdown";
 import { useToast } from "../../hooks/useToast";
 import { useProgram } from "../../contexts/ProgramContext";
 import { useExamTransitions } from "../../hooks/useExamTransitions";
@@ -29,6 +31,7 @@ type SortField = "name" | "score" | "percentage" | "school" | "belt" | "date";
 type SortDir = "asc" | "desc";
 
 const ALL = "all";
+const NO_COACH = "__none__";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -140,6 +143,23 @@ export default function ResultManagement() {
  const [genderFilter, setGenderFilter] = useState<string>(ALL);
  const [beltFilter, setBeltFilter] = useState<string>(ALL);
  const [statusFilter, setStatusFilter] = useState<StatusFilter>(ALL);
+ const [coachFilter, setCoachFilter] = useState<string>(ALL); // secretaryId, or NO_COACH
+ // Examination (assessment) date range - the day the result was saved (scoredAt).
+ const [dateFrom, setDateFrom] = useState("");
+ const [dateTo, setDateTo] = useState("");
+ const [coachNames, setCoachNames] = useState<Record<string, string>>({});
+ useEffect(() => {
+ firebaseCoachService.getAll()
+ .then((cs: any[]) => setCoachNames(Object.fromEntries(cs.map((c) => [c.uid || c.id, c.fullName || c.email || "Coach"]))))
+ .catch((e) => console.error("Failed to load coaches:", e));
+ }, []);
+ const coachOf = (s: StudentRecord) => (s.secretaryId ? coachNames[s.secretaryId] || "Unknown Coach" : "\u2014");
+ const scoredDay = (s: StudentRecord) => {
+ const v: any = (s as any).scoredAt;
+ if (!v) return "";
+ const d = typeof v?.toDate === "function" ? v.toDate() : new Date(v);
+ return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+ };
 
  // ── fetch ────────────────────────────────────────────────────────────────────
 
@@ -226,6 +246,11 @@ export default function ResultManagement() {
  () => Array.from(new Set(students.map((s) => s.registrationType).filter(Boolean))).sort() as string[],
  [students],
  );
+ const coachOptions = useMemo(() => {
+ const ids = new Set<string>();
+ students.forEach((s) => s.secretaryId && ids.add(s.secretaryId));
+ return [...ids].map((id) => ({ id, name: coachNames[id] || "Unknown Coach" })).sort((a, b) => a.name.localeCompare(b.name));
+ }, [students, coachNames]);
  const genderOptions = useMemo(
  () => Array.from(new Set(students.map((s) => s.gender).filter(Boolean))).sort() as string[],
  [students],
@@ -248,6 +273,13 @@ export default function ResultManagement() {
  if (beltFilter !== ALL) {
  res = res.filter((s) => resolveStudentTransition(s, karateT, silambamT).key === beltFilter);
  }
+ if (coachFilter !== ALL) res = res.filter((s) => (coachFilter === NO_COACH ? !s.secretaryId : s.secretaryId === coachFilter));
+ if (dateFrom || dateTo) {
+ res = res.filter((s) => {
+ const d = scoredDay(s);
+ return !!d && (!dateFrom || d >= dateFrom) && (!dateTo || d <= dateTo);
+ });
+ }
  if (statusFilter !== ALL) {
  if (statusFilter === "passed") res = res.filter((s) => s.testStatus === "passed" || s.testStatus === "pass");
  else if (statusFilter === "failed") res = res.filter((s) => s.testStatus === "failed" || s.testStatus === "fail");
@@ -266,7 +298,7 @@ export default function ResultManagement() {
 
  return sortStudents(res, sortField, sortDir);
  // eslint-disable-next-line react-hooks/exhaustive-deps
- }, [students, schools, schoolNameToId, schoolFilter, batchFilter, eventFilter, genderFilter, beltFilter, karateT, silambamT, statusFilter, search, sortField, sortDir]);
+ }, [students, schools, schoolNameToId, schoolFilter, batchFilter, eventFilter, genderFilter, beltFilter, karateT, silambamT, statusFilter, coachFilter, dateFrom, dateTo, search, sortField, sortDir]);
 
  const toggleSort = (field: SortField) => {
  if (sortField === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -275,7 +307,7 @@ export default function ResultManagement() {
 
  const filtersActive =
  schoolFilter !== ALL || batchFilter !== ALL || eventFilter !== ALL ||
- genderFilter !== ALL || beltFilter !== ALL || statusFilter !== ALL || search.trim() !== "";
+ genderFilter !== ALL || beltFilter !== ALL || statusFilter !== ALL || coachFilter !== ALL || !!dateFrom || !!dateTo || search.trim() !== "";
 
  const clearFilters = () => {
  setSchoolFilter(ALL);
@@ -284,6 +316,9 @@ export default function ResultManagement() {
  setGenderFilter(ALL);
  setBeltFilter(ALL);
  setStatusFilter(ALL);
+ setCoachFilter(ALL);
+ setDateFrom("");
+ setDateTo("");
  setSearch("");
  };
 
@@ -313,6 +348,17 @@ export default function ResultManagement() {
  "Belt/Stage": s.beltLevel || (s.stageLevel != null ? `Stage ${s.stageLevel}` : "-"),
  "Payment": s.paymentStatus,
  "Test Status": (s.testStatus === "passed" || s.testStatus === "pass") ? "PASSED" : (s.testStatus === "failed" || s.testStatus === "fail") ? "FAILED" : "PENDING",
+ ...(() => {
+ const b = extractBreakdown(s);
+ return {
+ "Coach": coachOf(s),
+ "Transition": resolveStudentTransition(s, karateT, silambamT).label,
+ "Technical Lesson No.": b.technicalLesson ?? "-",
+ "Technical Score": b.technicalScore ?? "-",
+ "Athletic Lesson No.": b.athleticLesson ?? "-",
+ "Athletic Score": b.athleticScore ?? "-",
+ };
+ })(),
  "Score": s.score ?? "-",
  "Percentage": s.percentage != null ? `${s.percentage}%` : "-",
  "Grade": getGrade(s.percentage),
@@ -347,6 +393,8 @@ export default function ResultManagement() {
  if (eventFilter !== ALL) items.push({ label: "Event", value: eventFilter === "school" ? "School" : "Individual" });
  if (genderFilter !== ALL) items.push({ label: "Gender", value: genderFilter });
  if (beltFilter !== ALL) items.push({ label: "Belt/Stage Transition", value: beltOptions.find((o) => o.key === beltFilter)?.label || beltFilter });
+ if (coachFilter !== ALL) items.push({ label: "Coach", value: coachFilter === NO_COACH ? "No coach (individual)" : coachNames[coachFilter] || "Coach" });
+ if (dateFrom || dateTo) items.push({ label: "Examination Date", value: `${dateFrom || "any"} to ${dateTo || "any"}` });
  if (statusFilter !== ALL) items.push({ label: "Status", value: statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1) });
  if (search.trim()) items.push({ label: "Search", value: search.trim() });
  return items;
@@ -361,6 +409,7 @@ export default function ResultManagement() {
  details?: Array<{ label: string; value: string }>;
  showSchoolColumn?: boolean;
  showBatchColumn?: boolean;
+ showCoachColumn?: boolean;
  },
  ) => {
  if (list.length === 0) {
@@ -391,6 +440,20 @@ export default function ResultManagement() {
  percentage: s.percentage != null ? `${s.percentage}%` : "-",
  grade: getGrade(s.percentage),
  rank: rank != null ? `#${rank}` : "-",
+ ...(() => {
+ const b = extractBreakdown(s);
+ return {
+ coach: coachOf(s),
+ exam: s.programType === "SELAMBAM" ? "Silambam" : "Karate",
+ // The transition being assessed - not the student's current belt/stage.
+ transition: resolveStudentTransition(s, karateT, silambamT).label,
+ technicalLesson: b.technicalLesson ?? "\u2014",
+ technicalScore: fmtScore(b.technicalScore),
+ athleticLesson: b.athleticLesson ?? "\u2014",
+ athleticScore: fmtScore(b.athleticScore),
+ totalMismatch: b.totalMismatch,
+ };
+ })(),
  };
  });
 
@@ -414,6 +477,7 @@ export default function ResultManagement() {
  rows,
  showSchoolColumn: cfg.showSchoolColumn,
  showBatchColumn: cfg.showBatchColumn,
+ showCoachColumn: cfg.showCoachColumn,
  });
  const safeName = cfg.fileName.replace(/[^a-zA-Z0-9-_]+/g, "_").replace(/^_+|_+$/g, "") || "Results";
  doc.save(`${safeName}_${new Date().toISOString().split("T")[0]}.pdf`);
@@ -437,6 +501,7 @@ export default function ResultManagement() {
  details: [...filterItems, { label: "Students", value: String(filteredResults.length) }],
  showSchoolColumn: schoolFilter === ALL,
  showBatchColumn: batchFilter === ALL,
+ showCoachColumn: coachFilter === ALL,
  });
  };
 
@@ -755,6 +820,28 @@ export default function ResultManagement() {
  <option value="failed">Failed</option>
  <option value="pending">Pending</option>
  </select>
+ </div>
+
+ <div>
+ <label className="block text-xs font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-wide mb-1.5">Coach</label>
+ <select
+ value={coachFilter}
+ onChange={(e) => setCoachFilter(e.target.value)}
+ className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-800 text-sm text-gray-700 dark:text-zinc-300 bg-white dark:bg-zinc-900"
+ >
+ <option value={ALL}>All Coaches</option>
+ {coachOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+ <option value={NO_COACH}>No coach (individual)</option>
+ </select>
+ </div>
+
+ <div>
+ <label className="block text-xs font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-wide mb-1.5">Examination Date</label>
+ <div className="flex items-center gap-2">
+ <input type="date" aria-label="Examined from" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} className="w-full px-2 py-2 rounded-lg border border-gray-200 dark:border-zinc-800 text-sm text-gray-700 dark:text-zinc-300 bg-white dark:bg-zinc-900" />
+ <span className="text-xs text-gray-400">to</span>
+ <input type="date" aria-label="Examined to" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} className="w-full px-2 py-2 rounded-lg border border-gray-200 dark:border-zinc-800 text-sm text-gray-700 dark:text-zinc-300 bg-white dark:bg-zinc-900" />
+ </div>
  </div>
  </div>
 
