@@ -10,6 +10,10 @@
       "destination": "/api/index.js"
     },
     {
+      "source": "/api/admin/batches",
+      "destination": "/api/admin/payments?kind=batch"
+    },
+    {
       "source": "/api/examiner/:action(allocate|remove-student|start-exam|recover)",
       "destination": "/api/examiner/session?action=:action"
     }

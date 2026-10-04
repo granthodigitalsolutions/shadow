@@ -191,6 +191,8 @@ export default function ExaminerScoring() {
 
   const [queue] = useState<string[]>(readQueue);
   const [sessionIndex, setSessionIndex] = useState<number>(readIndex);
+  // Set only from the server: either the score save that completed the batch, or the stored batch status.
+  const [batchCompleted, setBatchCompleted] = useState(false);
 
   const [loadingRoster, setLoadingRoster] = useState(true);
   const [rosterError, setRosterError] = useState<string | null>(null);
@@ -299,6 +301,16 @@ export default function ExaminerScoring() {
   };
 
   const isComplete = sessionIndex >= queue.length;
+
+  // When the sitting ends, ask the server for the batch's stored status so the
+  // completion message reflects the real backend state (e.g. after a retry).
+  useEffect(() => {
+    if (!isComplete || batchCompleted) return;
+    getExaminerStudents()
+      .then(({ data }) => { if (data.batch?.status === "completed") setBatchCompleted(true); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isComplete]);
   const currentStudentId = !isComplete ? queue[sessionIndex] : undefined;
   const currentStudent = currentStudentId ? rosterMap[currentStudentId] : undefined;
 
@@ -344,6 +356,7 @@ export default function ExaminerScoring() {
         return;
       }
 
+      if (data.batchCompleted) setBatchCompleted(true);
       setSubmissionResult({
         type: "success",
         percentage: data.student?.percentage ?? percentage,
@@ -368,6 +381,12 @@ export default function ExaminerScoring() {
           <p className="text-sm text-zinc-400 mb-8">
             You've scored all {queue.length} student{queue.length === 1 ? "" : "s"} in this sitting.
           </p>
+          {batchCompleted && (
+            <div role="status" className="mb-6 p-4 rounded-2xl bg-emerald-900/20 border border-emerald-800/50 text-left">
+              <p className="font-bold text-emerald-400">Batch Completed Successfully</p>
+              <p className="text-sm text-emerald-300/90 mt-1">All assigned students have completed their assessments. Thank you!</p>
+            </div>
+          )}
           <div className="flex flex-col gap-3">
             <button
               onClick={handleSelectMore}

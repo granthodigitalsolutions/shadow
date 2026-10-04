@@ -4,6 +4,8 @@ import {
   X, AlertCircle, RefreshCw, FileText, CheckCircle2, Clock, Check
 } from "lucide-react";
 import { useProgram } from "../../contexts/ProgramContext";
+import { useExamTransitions } from "../../hooks/useExamTransitions";
+import { resolveStudentTransition, transitionFilterOptions } from "../../utils/examTransitions";
 import { firebaseStudentService, firebaseSchoolService } from "../../services/firebaseData";
 import { auth } from "../../config/firebase";
 import { useToast } from "../../hooks/useToast";
@@ -69,7 +71,12 @@ export default function StickerPrinting() {
   // Data states
   const [schools, setSchools] = useState<School[]>([]);
   const [allStudents, setAllStudents] = useState<StudentRecord[]>([]);
-  const [availableBelts, setAvailableBelts] = useState<string[]>([]);
+  // Complete from → to transitions from the Admin fee configuration (same source as registration).
+  const { karate: karateT, silambam: silambamT } = useExamTransitions();
+  const transitionOptions = useMemo(
+    () => transitionFilterOptions(currentProgram === 'SELAMBAM' ? 'SELAMBAM' : currentProgram === 'KARATE' ? 'KARATE' : 'all', karateT, silambamT),
+    [currentProgram, karateT, silambamT],
+  );
 
   // Search & Filter States
   const [searchQuery, setSearchQuery] = useState("");
@@ -120,14 +127,6 @@ export default function StickerPrinting() {
       setSchools(schoolsData);
       setAllStudents(studentsData);
       
-      const predefinedBelts = currentProgram === 'SELAMBAM'
-        ? Array.from({ length: 8 }, (_, i) => `Stage ${i + 1}`)
-        : currentProgram === 'KARATE'
-          ? ['White', 'Yellow', 'Orange', 'Blue', 'Green', 'II Brown', 'I Brown', 'Black Belt']
-          : ['White', 'Yellow', 'Orange', 'Blue', 'Green', 'II Brown', 'I Brown', 'Black Belt', ...Array.from({ length: 8 }, (_, i) => `Stage ${i + 1}`)];
-      
-      setAvailableBelts(predefinedBelts);
-
       // Reset filters
       setSearchQuery("");
       setForcedQuery("");
@@ -167,8 +166,8 @@ export default function StickerPrinting() {
       // filter must apply regardless of which mode is active.
       if (selectedSchoolId && s.schoolId !== selectedSchoolId) return false;
       if (selectedBelt) {
-        const belt = s.beltLevel || s.stageLevel?.toString();
-        if (belt !== selectedBelt) return false;
+        // selectedBelt holds the transition key; compare the exact transition, not the destination belt name.
+        if (resolveStudentTransition(s as any, karateT, silambamT).key !== selectedBelt) return false;
       }
 
       // 2. Text Search Filtering (for Individual mode primarily, but applies to both if needed)
@@ -185,7 +184,7 @@ export default function StickerPrinting() {
 
       return true;
     });
-  }, [allStudents, mode, selectedSchoolId, selectedBelt, debouncedSearchQuery, stickerStatusFilter]);
+  }, [allStudents, mode, selectedSchoolId, selectedBelt, karateT, silambamT, debouncedSearchQuery, stickerStatusFilter]);
 
   // For individual mode, limit results if no query is present to avoid lagging
   const displayedStudents = useMemo(() => {
@@ -452,8 +451,8 @@ export default function StickerPrinting() {
                   onChange={(e) => setSelectedBelt(e.target.value)}
                   className="px-4 py-2 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 dark:text-white text-sm w-[160px]"
                 >
-                  <option value="">All Belts</option>
-                  {availableBelts.map(belt => <option key={belt} value={belt}>{belt}</option>)}
+                  <option value="">All Belt / Stage Transitions</option>
+                  {transitionOptions.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
                 </select>
               </>
             )}
@@ -493,7 +492,7 @@ export default function StickerPrinting() {
               )}
               {selectedBelt && (
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-lg text-xs font-medium">
-                  Belt: {selectedBelt}
+                  Transition: {transitionOptions.find(t => t.key === selectedBelt)?.label || selectedBelt}
                   <X className="w-3 h-3 cursor-pointer hover:text-red-500" onClick={() => setSelectedBelt("")} />
                 </span>
               )}

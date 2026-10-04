@@ -55,6 +55,10 @@ export function buildKarateTransitions(allFees: FeeStructure[]): ExamTransition[
     .map(({ active, ...t }) => t);
 }
 
+// The first configured stage is the INITIAL stage, not a promotion: nobody is
+// promoted "into" it, so it is never offered as a transition (just as Karate's
+// White belt has no "White → White"). Its fee document is kept untouched for
+// historical registrations, and it still serves as the "from" of the next stage.
 export function buildSilambamTransitions(allFees: SilambanFeeStructure[]): ExamTransition[] {
   const sorted = [...allFees].sort(byOrder);
   const nameOf = (f: SilambanFeeStructure) => f.stageName || `Stage ${f.stageNumber}`;
@@ -72,10 +76,11 @@ export function buildSilambamTransitions(allFees: SilambanFeeStructure[]): ExamT
         order: f.order || 0,
         stageNumber: f.stageNumber,
         active: f.active !== false,
+        initial: i === 0,
       };
     })
-    .filter((t) => t.active)
-    .map(({ active, ...t }) => t);
+    .filter((t) => t.active && !t.initial)
+    .map(({ active, initial, ...t }) => t);
 }
 
 /** "White → Yellow — ₹1,200", or a clear "fee not set" note. */

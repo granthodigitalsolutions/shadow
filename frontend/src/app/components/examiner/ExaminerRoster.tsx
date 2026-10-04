@@ -469,6 +469,13 @@ export default function ExaminerRoster() {
       </div>
 
       <div className="container mx-auto max-w-3xl px-4 py-8 space-y-6">
+        {batch?.status === "completed" && (
+          <div role="status" className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/50">
+            <p className="font-bold text-emerald-700 dark:text-emerald-400">Batch Completed Successfully</p>
+            <p className="text-sm text-emerald-700/90 dark:text-emerald-300/90 mt-1">All assigned students have completed their assessments. Thank you!</p>
+          </div>
+        )}
+
         {/* Progress summary */}
         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-sm p-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4">

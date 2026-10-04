@@ -4,6 +4,7 @@ const { verifyExaminerToken, getExaminer } = require('../../src/middleware/verif
 const { db } = require('../../src/config/firebase');
 const { ValidationError, ForbiddenError, NotFoundError, ConflictError } = require('../../src/utils/errors');
 const { allocationsRef } = require('../../src/utils/examinerBatch');
+const { evaluateCompletion, readBatchStudents } = require('../../src/services/batchCompletion');
 const logger = require('../../src/utils/logger');
 
 // Max points per scoring category (technical / athletic).
@@ -63,9 +64,14 @@ const handler = async (req, res) => {
     throw new ForbiddenError("This student is in another examiner's allocation.");
   }
 
-  await db.runTransaction(async (tx) => {
+  const batchCompleted = await db.runTransaction(async (tx) => {
     const studentRef = db.collection('students').doc(studentId);
+    const batchTxSnap = await tx.get(batchRef);
     const studentSnap = await tx.get(studentRef);
+    // Every assigned student's current record, read before any write, so the
+    // completion check below is made from stored data, not from the client.
+    const batchNow = batchTxSnap.data() || batch;
+    const peers = await readBatchStudents(tx, db, batchNow);
 
     if (!studentSnap.exists) {
       throw new NotFoundError('Student not found.');
@@ -76,7 +82,7 @@ const handler = async (req, res) => {
     }
 
     const now = new Date().toISOString();
-    tx.update(studentRef, {
+    const scoreUpdate = {
       score: technicalScore + athleticScore,
       percentage,
       result: result,
@@ -87,11 +93,24 @@ const handler = async (req, res) => {
       examinerRemarks: examinerRemarks ?? null,
       scoredAt: now,
       updatedAt: now
-    });
+    };
+    tx.update(studentRef, scoreUpdate);
+
+    // Automatic completion: this save is part of the same transaction, so the
+    // batch only completes if THIS score commits AND every assigned student
+    // now has a saved, valid result AND the batch is full. Idempotent - an
+    // already-completed batch is left as is.
+    if (batchNow.status === 'completed') return false;
+    peers.set(studentId, { ...(peers.get(studentId) || studentSnap.data()), ...scoreUpdate });
+    const verdict = evaluateCompletion(batchNow, peers, { requireFull: true });
+    if (!verdict.ok) return false;
+    tx.update(batchRef, { status: 'completed', completedAt: now, completedBy: 'auto', updatedAt: now });
+    return true;
   });
 
   logger.info('Examiner submitted student score', {
     batchId,
+    batchCompleted,
     studentId,
     result,
     lessonNumbers,
@@ -105,7 +124,9 @@ const handler = async (req, res) => {
       testStatus: result,
       percentage,
       result
-    }
+    },
+    batchCompleted,
+    batchStatus: batchCompleted ? 'completed' : batch.status
   });
 };
 

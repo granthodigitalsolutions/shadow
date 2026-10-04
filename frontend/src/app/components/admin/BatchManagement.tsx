@@ -9,6 +9,7 @@ import { useDialog } from "../../contexts/DialogContext";
 import { Batch, BeltTest, School, StudentRecord } from "../../types/admin";
 import { useProgram } from "../../contexts/ProgramContext";
 import { formatBatchName, batchQrUrl } from "../../utils/batchFormatters";
+import { completeAdminBatch } from "../../services/adminPaymentsApi";
 import { filterEligibleStudents } from "../../utils/batchEligibility";
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; icon: typeof Clock }> = {
@@ -376,13 +377,14 @@ export default function BatchManagement() {
  if (!ok) return;
 
  try {
- await firebaseBatchService.updateStatus(batch.id, "completed");
- // Surgical UI state update — no fetchData()
+ // Server-side completion: refused while any assigned student still has a
+ // pending/unsaved assessment; idempotent if the batch already completed.
+ const res = await completeAdminBatch(batch.id);
  setBatches(prev => prev.map(b => b.id === batch.id ? { ...b, status: "completed" } : b));
- showToast("Batch completed successfully!", "success");
- } catch (error) {
+ showToast(res.alreadyCompleted ? "This batch was already completed." : "Batch completed successfully!", "success");
+ } catch (error: any) {
  console.error("Error completing batch:", error);
- showToast("Failed to complete batch", "error");
+ showToast(error?.message || "Failed to complete batch", "error");
  }
  };
 

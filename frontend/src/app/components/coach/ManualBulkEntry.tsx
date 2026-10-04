@@ -22,6 +22,11 @@ export default function ManualBulkEntry({ onStudentsGenerated, selectedProgram, 
   const [studentCount, setStudentCount] = useState<number>(() => {
     return Number(sessionStorage.getItem('manual_bulk_count')) || 1;
   });
+  // What the coach is typing. It may be empty or half-typed while editing and
+  // is only turned into a real count (and forms) on blur / Enter, so replacing
+  // "10" with "15" never fights the keyboard.
+  const [countInput, setCountInput] = useState<string>(() => String(Number(sessionStorage.getItem('manual_bulk_count')) || 1));
+  const [countError, setCountError] = useState<string | null>(null);
   const [studentsData, setStudentsData] = useState<any[]>(() => {
     const cached = sessionStorage.getItem('manual_bulk_data');
     return cached ? JSON.parse(cached) : [];
@@ -113,6 +118,33 @@ export default function ManualBulkEntry({ onStudentsGenerated, selectedProgram, 
     sessionStorage.setItem('manual_bulk_data', JSON.stringify(studentsData));
   }, [studentCount, studentsData]);
 
+  const MAX_STUDENTS = 100; // existing limit of this screen
+
+  const isFilled = (s: any) => !!(s && (s.name || s.gender || s.standard || s.contact || s.whatsapp || s.beltIndex || s.stageLevel || s.schoolId));
+
+  // Validate what was typed and, if valid, apply it. Never silently drops entered data.
+  const commitCount = () => {
+    const raw = countInput.trim();
+    if (!/^\d+$/.test(raw)) {
+      setCountError(raw === "" ? "Enter how many students you are registering." : "Enter a whole number (no decimals, signs or letters).");
+      return;
+    }
+    const n = Number(raw);
+    if (n < 1) { setCountError("The number of students must be at least 1."); return; }
+    if (n > MAX_STUDENTS) { setCountError(`You can register up to ${MAX_STUDENTS} students at a time.`); return; }
+    if (n < studentsData.length) {
+      const dropped = studentsData.slice(n).filter(isFilled).length;
+      if (dropped > 0 && !window.confirm(`Reducing to ${n} will remove ${dropped} student form${dropped === 1 ? "" : "s"} you have already filled in. Continue?`)) {
+        setCountInput(String(studentCount)); // keep everything as it was
+        setCountError(null);
+        return;
+      }
+    }
+    setCountError(null);
+    setCountInput(String(n));
+    setStudentCount(n);
+  };
+
   const handleStudentChange = (index: number, field: string, value: any) => {
     const updated = [...studentsData];
     updated[index] = { ...updated[index], [field]: value };
@@ -130,6 +162,8 @@ export default function ManualBulkEntry({ onStudentsGenerated, selectedProgram, 
       sessionStorage.removeItem('manual_bulk_count');
       sessionStorage.removeItem('manual_bulk_data');
       setStudentCount(1);
+      setCountInput("1");
+      setCountError(null);
       setStudentsData([{
         name: '',
         gender: '',
@@ -146,6 +180,8 @@ export default function ManualBulkEntry({ onStudentsGenerated, selectedProgram, 
   };
 
   const handleGenerate = () => {
+    // A count that was typed but not yet applied (or is invalid) must be settled first.
+    if (countInput.trim() !== String(studentCount)) { commitCount(); return; }
     // Validate each student
     for (let i = 0; i < studentsData.length; i++) {
       const s = studentsData[i];
@@ -283,14 +319,20 @@ export default function ManualBulkEntry({ onStudentsGenerated, selectedProgram, 
         <div className="grid grid-cols-1 gap-4">
           <div>
             <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Number of Students *</label>
-            <input 
-              type="number" 
-              min={1} 
-              max={100}
-              value={studentCount}
-              onChange={e => setStudentCount(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
-              className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-2.5 text-sm font-medium text-zinc-900 dark:text-white"
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              autoComplete="off"
+              value={countInput}
+              onFocus={(e) => e.target.select()}
+              onChange={(e) => { setCountInput(e.target.value.replace(/[^0-9]/g, "")); setCountError(null); }}
+              onBlur={commitCount}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitCount(); } }}
+              aria-invalid={!!countError}
+              className={`w-full bg-zinc-50 dark:bg-zinc-900 border rounded-xl px-4 py-2.5 text-sm font-medium text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 ${countError ? "border-red-500" : "border-zinc-200 dark:border-zinc-800"}`}
             />
+            {countError && <p className="text-xs font-semibold text-red-500 mt-1.5">{countError}</p>}
           </div>
         </div>
       </div>

@@ -623,6 +623,16 @@ export default function FeeStructure() {
  >
  {fee.stageName}
  </p>
+ {(() => {
+ // The first stage is the initial stage, not a promotion: it is not offered in registration.
+ const ordered = [...silamFees].sort((a, b) => (a.order || 0) - (b.order || 0));
+ const idx = ordered.findIndex((f) => f.id === fee.id);
+ return idx <= 0 ? (
+ <p className="text-[11px] font-semibold text-center text-gray-500 dark:text-zinc-400">Initial stage - not a promotion fee (kept for existing registrations)</p>
+ ) : (
+ <p className="text-[11px] font-semibold text-center text-gray-600 dark:text-zinc-300">Promotion: {ordered[idx - 1].stageName} → {fee.stageName}</p>
+ );
+ })()}
  <p className="text-2xl font-bold" style={{ color: palette.color }}>
  ₹{fee.fee.toLocaleString()}
  </p>

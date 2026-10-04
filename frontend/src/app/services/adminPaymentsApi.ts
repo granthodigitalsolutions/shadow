@@ -21,6 +21,26 @@ export interface ReviewOutcome {
   partial: boolean;
 }
 
+export interface CompleteBatchOutcome { batchId: string; status: string; alreadyCompleted: boolean }
+
+// Manual batch completion goes through the same server-side rules as the
+// automatic one: refused while any assigned student's assessment is pending.
+export async function completeAdminBatch(batchId: string): Promise<CompleteBatchOutcome> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("You must be signed in as an admin.");
+  const token = await user.getIdToken();
+  const { ok, status, data } = await fetchJson<any>(`${import.meta.env.VITE_API_BASE_URL}/api/admin/batches`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ batchId }),
+  });
+  if (!ok || !data?.success) {
+    if (status === 403) throw new Error("You don't have permission to complete batches.");
+    throw new Error(data?.error?.message || data?.message || "Could not complete the batch. Nothing was changed.");
+  }
+  return { batchId: data.batchId, status: data.status, alreadyCompleted: !!data.alreadyCompleted };
+}
+
 export const REVIEW_REASON_LABELS: Record<string, string> = {
   already_confirmed: "already confirmed",
   already_rejected: "already rejected",
