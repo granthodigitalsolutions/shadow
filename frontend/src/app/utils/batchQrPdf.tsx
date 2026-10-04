@@ -7,6 +7,8 @@ import { PDF_COLORS, drawBrandHeader, truncateText } from './pdfBranding';
 export interface BatchQrPdfInfo {
   /** The batch code (printed on the sheet); the QR encodes a link carrying it. */
   code: string;
+  /** Stable batch id carried in the QR link. */
+  batchId?: string;
   /** e.g. "Batch #1 (Karate)" — from formatBatchName(). */
   batchName: string;
   schoolName?: string;
@@ -131,7 +133,7 @@ export function buildBatchQrPdf(qrPngDataUrl: string, info: BatchQrPdfInfo): jsP
 
 /** Generates and downloads the one-page batch QR PDF. */
 export async function downloadBatchQrPdf(info: BatchQrPdfInfo): Promise<void> {
-  const png = await batchQrToPngDataUrl(batchQrUrl(info.code));
+  const png = await batchQrToPngDataUrl(batchQrUrl(info.code, info.batchId));
   const doc = buildBatchQrPdf(png, info);
   const safeName = info.batchName.replace(/[^a-zA-Z0-9-_]+/g, '_').replace(/^_+|_+$/g, '');
   doc.save(`Batch_QR_${safeName || 'Batch'}_${info.code}.pdf`);

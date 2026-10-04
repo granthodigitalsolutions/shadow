@@ -49,13 +49,22 @@ export default function ExaminerEntry() {
   // error with the manual entry box still available.
   useEffect(() => {
     const qrCode = extractBatchCode(searchParams.get("code") || "");
+    const qrBatchId = (searchParams.get("batchId") || "").trim();
     if (qrCode) {
-      // A QR for a (possibly different) batch always wins over a stored session.
+      setSearchParams({}, { replace: true });
+      // Already signed in to THIS batch: open it directly instead of asking again.
+      try {
+        const stored = JSON.parse(localStorage.getItem("examinerBatch") || "null");
+        if (qrBatchId && stored?.id === qrBatchId && localStorage.getItem("examinerToken")) {
+          navigate("/examiner/batch", { replace: true });
+          return;
+        }
+      } catch { /* fall through to a normal sign-in */ }
+      // A QR for a different batch always wins over a stored session.
       localStorage.removeItem("examinerToken");
       localStorage.removeItem("examinerBatch");
-      setSearchParams({}, { replace: true });
       setCode(qrCode);
-      handleVerify(qrCode);
+      handleVerify(qrCode, qrBatchId || undefined);
       return;
     }
     if (localStorage.getItem("examinerToken")) {
@@ -64,7 +73,7 @@ export default function ExaminerEntry() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleVerify = async (candidate: string) => {
+  const handleVerify = async (candidate: string, expectedBatchId?: string) => {
     if (!CODE_REGEX.test(candidate)) {
       setErrorMsg("Enter the 6-digit batch code.");
       return;
@@ -72,7 +81,7 @@ export default function ExaminerEntry() {
     setVerifying(true);
     setErrorMsg(null);
     try {
-      const { data } = await verifyExaminerCode(candidate);
+      const { data } = await verifyExaminerCode(candidate, expectedBatchId);
       if (data.success && data.token && data.batch) {
         localStorage.setItem("examinerToken", data.token);
         localStorage.setItem("examinerBatch", JSON.stringify(data.batch));

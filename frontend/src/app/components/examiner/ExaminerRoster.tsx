@@ -414,7 +414,7 @@ export default function ExaminerRoster() {
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-6">{error}</p>
           <div className="flex flex-col gap-3">
             <button
-              onClick={fetchRoster}
+              onClick={() => fetchRoster()}
               className="w-full px-5 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-bold active:scale-95 transition-all"
             >
               Try Again

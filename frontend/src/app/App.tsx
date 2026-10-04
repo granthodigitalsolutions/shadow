@@ -330,6 +330,7 @@ const router = createBrowserRouter([
       { path: "/admin/login",    element: <AdminLogin /> },
       { path: "/admin/register", element: <Navigate to="/admin/login" replace /> },
       { path: "/examiner",       element: <ExaminerEntry /> },
+      { path: "/examiner/scan",  element: <ExaminerEntry /> },
       { path: "/coach/login", element: <CoachLogin /> },
       { path: "/coach/register", element: <CoachRegister /> },
       { path: "/secretary/login", element: <Navigate to="/coach/login" replace /> },

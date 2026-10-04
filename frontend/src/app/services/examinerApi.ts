@@ -151,12 +151,13 @@ async function examinerFetch<T = any>(
 
 export async function verifyExaminerCode(
   code: string,
+  batchId?: string,
 ): Promise<{ ok: boolean; status: number; data: VerifyCodeResponse }> {
   const attempt = () =>
     examinerFetch<VerifyCodeResponse>("/verify-code", {
       method: "POST",
       skipAuth: true,
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, batchId }),
     });
   try {
     return await attempt();

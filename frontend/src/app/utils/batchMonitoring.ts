@@ -103,7 +103,8 @@ export function deriveBatchRow(
 
   return {
     id: b.id,
-    name: formatName(batch),
+    // Exact transition in the name, also for batches generated before the name was stored.
+    name: !matched || b.transitionLabel || (b.customName || "").trim() ? formatName(batch) : formatName({ ...batch, transitionLabel: matched.label } as any),
     batch,
     schoolKey: b.schoolId || "unknown",
     schoolName: isIndividual ? "Individual" : school?.name || "Unknown School",

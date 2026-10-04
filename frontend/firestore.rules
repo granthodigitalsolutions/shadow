@@ -247,6 +247,12 @@ service cloud.firestore {
       }
     }
 
+    // Logical-batch pointers (batchKeys/{logicalKey} -> batchId): one per school/exam/session/transition,
+    // written in a transaction by the Admin batch generator so a batch is never created twice.
+    match /batchKeys/{keyId} {
+      allow read, write: if isAdmin();
+    }
+
     // Payment review audit trail - written only by the backend (Admin SDK bypasses rules);
     // admins may read it, nobody can alter it from a client.
     match /paymentAudit/{auditId} {

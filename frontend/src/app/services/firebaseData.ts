@@ -18,6 +18,7 @@ import {
   Timestamp,
   onSnapshot,
   deleteField,
+  runTransaction,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
 import {
@@ -29,6 +30,8 @@ import {
   AdminUser,
 } from "../types/admin";
 import { filterEligibleStudents } from "../utils/batchEligibility";
+import { buildKarateTransitions, buildSilambamTransitions } from "../utils/examTransitions";
+import { resolveBatchTransition, logicalBatchKey, planCapacity } from "../utils/batchIdentity";
 
 // Helper function to retry operations on transient errors
 export const retryOperation = async <T>(
@@ -1240,17 +1243,29 @@ export const firebaseBatchService = {
     );
   },
 
-  // Creates ONE new batch pre-populated with all currently-eligible students
-  // for the given School/Belt Test/Belt combination, in a single atomic write
-  // (or a small number of chunked atomic writes if the eligible count is large).
+  // Idempotent "Generate Batch": finds or creates THE logical batch for
+  // (exam type, school or individual, examination session, exact belt/stage
+  // transition) and grows its capacity - it never creates a second batch for
+  // the same logical key.
   //
-  // Dynamic Student Assignment: a generated batch is a block of empty badge
-  // slots, not a pre-filled roster. studentIds starts empty — eligibility is
-  // only used here to size the batch's capacity (maxSize), exactly like before.
-  // Which students actually fill those slots is decided later, one at a time,
-  // when the Examiner scans each student's own QR (see firebaseExaminerScan
-  // on the backend, which performs the real assignment + batchId stamping
-  // this function used to do upfront).
+  // Root cause of the old duplicates: this always did `setDoc(newAutoId, ...)`
+  // with maxSize = the number of verified students still *unbatched*. Once an
+  // examiner had scanned students in (batchId stamped => no longer eligible),
+  // running it again saw only the remainder and made a brand-new batch with a
+  // new number and code, splitting one logical batch in two.
+  //
+  // Now: a pointer document `batchKeys/{logicalKey}` -> batchId is read and
+  // written inside one Firestore transaction together with the batch, so two
+  // simultaneous runs contend on the same document and exactly one creates it
+  // (the other re-runs and finds it). New batches use the logical key as their
+  // id. Batches generated before this change are adopted (matched on session +
+  // school + belt) instead of duplicated; their id, code/QR, allocations,
+  // students and results are untouched.
+  //
+  // Capacity = students already in the batch + eligible unbatched students,
+  // grown only - never below slots examiners reserved or students placed
+  // outside an allocation. Occupied slots, allocations and codes are never
+  // rewritten. Safe to retry: the same inputs leave the batch unchanged.
   generateBatch: async (params: {
     schoolId: string;
     isIndividual: boolean;
@@ -1259,80 +1274,130 @@ export const firebaseBatchService = {
     programType: "KARATE" | "SELAMBAM";
   }): Promise<Batch> => {
     const { schoolId, isIndividual, beltTestId, belt, programType } = params;
+    const scopeSchoolId = isIndividual ? "individual" : schoolId;
 
-    // 1. Fetch a fresh list of students so eligibility reflects the true
-    // current state (not a possibly-stale UI cache).
+    // 1. Fresh eligibility (not a possibly-stale UI cache).
     const allStudents = await firebaseStudentService.getAll(programType);
-
-    // 2. Determine eligible students via the shared filter (single source of
-    // truth) — used only to size this batch's capacity, not to pre-fill it.
     const eligibleStudents = filterEligibleStudents(allStudents, {
       targetSchoolId: schoolId,
       isIndividual,
       beltTestId,
       belt,
     });
+    const eligibleCount = eligibleStudents.length;
 
-    // 3. Defensive re-check — the calling UI already disables the button at 0,
-    // but eligibility could have changed between render and click.
-    if (eligibleStudents.length === 0) {
+    // 2. Exact transition from the Admin fee configuration (never guessed).
+    const [kFees, sFees] = await Promise.all([
+      firebaseFeeStructureService.getAll(),
+      firebaseSilambanFeeService.getAll(),
+    ]);
+    const transition = resolveBatchTransition(
+      programType,
+      belt,
+      buildKarateTransitions(kFees),
+      buildSilambamTransitions(sFees),
+    );
+    const keyId = logicalBatchKey({ programType, schoolId: scopeSchoolId, beltTestId, transitionKey: transition.key });
+    const keyRef = doc(db, "batchKeys", keyId);
+
+    // 3. Adopt a batch generated before logical keys existed, if there is one
+    // (deterministic pick so concurrent runs agree: highest batchNumber, then id).
+    const legacySnap = await getDocs(
+      query(
+        collection(db, "batches"),
+        where("beltTestId", "==", beltTestId),
+        where("schoolId", "==", scopeSchoolId),
+        where("belt", "==", belt),
+      ),
+    );
+    const legacy = legacySnap.docs
+      .map((d) => ({ id: d.id, ...(d.data() as any) }))
+      .filter((b) => b.id !== keyId && !b.isDeleted && (b.programType || programType) === programType)
+      .sort((a, b) => (b.batchNumber || 0) - (a.batchNumber || 0) || (a.id < b.id ? -1 : 1))[0];
+
+    const keySnap0 = await getDoc(keyRef);
+    // Nothing to grow and nothing to create: don't touch anything.
+    if (eligibleCount === 0 && !keySnap0.exists() && !legacy) {
       throw new Error("No eligible students found");
     }
+    const newCode = !keySnap0.exists() && !legacy ? await firebaseBatchService.generateUniqueBatchCode() : "";
 
-    const capacity = eligibleStudents.length;
-
-    // 4. Unique 6-digit code.
-    const code = await firebaseBatchService.generateUniqueBatchCode();
-
-    // 5. Compute batchNumber using the same numbering sequence as the manual
-    // Create Batches flow (max existing batchNumber for this beltTestId, + 1).
-    const existingBatchesForTest = await firebaseBatchService.getByBeltTest(beltTestId);
-    const maxBatchNumber = existingBatchesForTest.reduce(
-      (max, b) => Math.max(max, b.batchNumber || 0),
-      0,
-    );
-    const batchNumber = maxBatchNumber + 1;
-
-    // 6. Create the batch itself — empty badge slots, no students assigned yet.
-    const batchDocData = {
-      beltTestId,
-      schoolId: isIndividual ? "individual" : schoolId,
-      belt,
-      batchNumber,
-      refereeIds: [] as string[],
-      studentIds: [] as string[],
-      maxSize: capacity,
-      status: "waiting" as const,
-      programType,
-      code,
-      isAutoGenerated: true,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+    const identityFields = {
+      logicalKey: keyId,
+      transitionKey: transition.key,
+      transitionFrom: transition.from,
+      transitionTo: transition.to,
+      transitionLabel: transition.label,
     };
 
-    const newBatchRef = doc(collection(db, "batches"));
-    await setDoc(newBatchRef, batchDocData);
+    let outcome: "created" | "updated" | "unchanged" = "unchanged";
+    let previousMaxSize = 0;
+    let result: any = null;
 
-    // 7. Return the newly created Batch immediately, no re-fetch needed. Also
-    // return the computed capacity separately (not on the Batch shape) so the
-    // caller's "N eligible students" UI can still show it without reading it
-    // off studentIds, which is intentionally empty on a freshly-generated batch.
-    return {
-      id: newBatchRef.id,
-      beltTestId,
-      schoolId: isIndividual ? "individual" : schoolId,
-      belt,
-      batchNumber,
-      refereeIds: [],
-      studentIds: [],
-      maxSize: capacity,
-      status: "waiting",
-      programType,
-      code,
-      isAutoGenerated: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    } as Batch;
+    await runTransaction(db, async (tx) => {
+      // ---- reads (all before any write) ----
+      const keySnap = await tx.get(keyRef);
+      const batchId: string = keySnap.exists() ? (keySnap.data() as any).batchId : legacy ? legacy.id : keyId;
+      const batchRef = doc(db, "batches", batchId);
+      const batchSnap = await tx.get(batchRef);
+
+      // ---- writes ----
+      if (!batchSnap.exists()) {
+        // First generation for this logical batch.
+        const maxBatchNumber = (await firebaseBatchService.getByBeltTest(beltTestId)).reduce(
+          (max, b) => Math.max(max, b.batchNumber || 0), 0);
+        const data = {
+          beltTestId,
+          schoolId: scopeSchoolId,
+          belt,
+          batchNumber: maxBatchNumber + 1,
+          refereeIds: [] as string[],
+          studentIds: [] as string[],
+          maxSize: eligibleCount,
+          status: "waiting" as const,
+          programType,
+          code: newCode || (await firebaseBatchService.generateUniqueBatchCode()),
+          isAutoGenerated: true,
+          ...identityFields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
+        tx.set(batchRef, data);
+        if (!keySnap.exists()) tx.set(keyRef, { batchId, programType, schoolId: scopeSchoolId, beltTestId, createdAt: serverTimestamp() });
+        outcome = "created";
+        previousMaxSize = 0;
+        result = { id: batchId, ...data, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+        return;
+      }
+
+      const existing = batchSnap.data() as any;
+      if (existing.status === "completed") {
+        throw new Error("This batch's examination is already completed, so its capacity can't be changed.");
+      }
+      const plan = planCapacity(existing, eligibleCount);
+      previousMaxSize = Number.isInteger(existing.maxSize) ? existing.maxSize : 0;
+
+      const updates: Record<string, any> = {};
+      (Object.keys(identityFields) as (keyof typeof identityFields)[]).forEach((k) => {
+        if (existing[k] !== identityFields[k]) updates[k] = identityFields[k];
+      });
+      if (plan.outcome === "updated") {
+        updates.maxSize = plan.newCapacity;
+        // A batch that had filled up is no longer full; mirror addStudentToBatch's filling/ongoing rule
+        // (never touch a batch an admin explicitly started).
+        if (existing.status === "ongoing" && !existing.startedAt && !existing.examStartedAt) updates.status = "filling";
+      }
+      if (Object.keys(updates).length > 0) {
+        updates.updatedAt = serverTimestamp();
+        tx.update(batchRef, updates);
+      }
+      if (!keySnap.exists()) tx.set(keyRef, { batchId, programType, schoolId: scopeSchoolId, beltTestId, createdAt: serverTimestamp() });
+      outcome = plan.outcome;
+      result = { ...existing, id: batchId, ...updates, maxSize: plan.newCapacity, updatedAt: new Date().toISOString() };
+    });
+
+    // Return the logical batch plus what the run actually did (for the UI message).
+    return Object.assign(result as Batch, { generation: { outcome, previousMaxSize, capacity: result.maxSize } }) as Batch;
   },
 };
 

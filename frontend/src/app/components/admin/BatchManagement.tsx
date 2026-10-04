@@ -279,8 +279,13 @@ export default function BatchManagement() {
  if (created.length === 0) {
  showToast("No batches could be generated", "error");
  } else {
+ const gens = created.map((c) => (c.batch as any).generation?.outcome);
+ const made = gens.filter((o) => o === "created").length;
+ const grown = gens.filter((o) => o === "updated").length;
+ const same = gens.filter((o) => o === "unchanged").length;
  showToast(
- `${created.length} batch${created.length === 1 ? "" : "es"} generated${failed.length ? `, ${failed.length} failed` : ""}`,
+ [made && `${made} created`, grown && `${grown} capacity increased`, same && `${same} already up to date`].filter(Boolean).join(", ")
+ + (failed.length ? `, ${failed.length} failed` : ""),
  failed.length ? "info" : "success",
  );
  }
@@ -313,7 +318,13 @@ export default function BatchManagement() {
  programType: generateSelectedTest?.programType ?? (currentProgram === "SELAMBAM" ? "SELAMBAM" : "KARATE"),
  });
  setGeneratedResult(newBatch);
- showToast("Batch generated!", "success");
+ const gen = (newBatch as any).generation;
+ showToast(
+ gen?.outcome === "updated" ? `Existing batch updated: capacity ${gen.previousMaxSize} → ${gen.capacity}`
+ : gen?.outcome === "unchanged" ? "This batch is already up to date - no new batch was created"
+ : "Batch generated!",
+ "success",
+ );
  refreshStudents();
  } catch (error: any) {
  console.error("Error generating batch:", error);
@@ -339,6 +350,7 @@ export default function BatchManagement() {
  const { downloadBatchQrPdf } = await import("../../utils/batchQrPdf");
  await downloadBatchQrPdf({
  code: batch.code,
+ batchId: batch.id,
  batchName: formatBatchName(batch),
  schoolName: isIndividual ? "Individual Students" : school ? [school.name, school.branch].filter(Boolean).join(" - ") : undefined,
  testName: getBeltTestName(batch),
@@ -595,7 +607,7 @@ export default function BatchManagement() {
  <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 space-y-3">
  <div className="flex items-center gap-3">
  <div className="bg-white p-1.5 rounded-lg border border-indigo-100 flex-shrink-0">
- <QRCodeSVG value={batchQrUrl(batch.code)} size={48} style={{ width: '48px', height: '48px' }} level="M" includeMargin={false} />
+ <QRCodeSVG value={batchQrUrl(batch.code, batch.id)} size={48} style={{ width: '48px', height: '48px' }} level="M" includeMargin={false} />
  </div>
  <div className="flex-1 min-w-0">
  <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Batch Code</p>
@@ -792,7 +804,7 @@ export default function BatchManagement() {
  {generatedAllResult.created.map(({ belt, batch }) => (
  <div key={batch.id} className="flex items-center gap-3 p-3 bg-indigo-50 rounded-xl border border-indigo-100">
  <div className="bg-white p-1.5 rounded-lg border border-indigo-100 flex-shrink-0">
- <QRCodeSVG value={batchQrUrl(batch.code || "")} size={48} style={{ width: '48px', height: '48px' }} level="M" includeMargin={false} />
+ <QRCodeSVG value={batchQrUrl(batch.code || "", batch.id)} size={48} style={{ width: '48px', height: '48px' }} level="M" includeMargin={false} />
  </div>
  <div className="flex-1 min-w-0">
  <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider truncate">{belt} &middot; {batch.maxSize} slot{batch.maxSize === 1 ? '' : 's'}</p>
@@ -828,7 +840,7 @@ export default function BatchManagement() {
  <div className="p-6 space-y-4 text-center">
  <div className="flex flex-col items-center gap-3">
  <div className="bg-white p-3 rounded-xl border border-indigo-100 shadow-sm inline-block">
- <QRCodeSVG value={batchQrUrl(generatedResult.code || "")} size={140} style={{ width: '140px', height: '140px' }} level="M" includeMargin={false} />
+ <QRCodeSVG value={batchQrUrl(generatedResult.code || "", generatedResult.id)} size={140} style={{ width: '140px', height: '140px' }} level="M" includeMargin={false} />
  </div>
  <div>
  <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Batch Code</p>
@@ -878,7 +890,7 @@ export default function BatchManagement() {
  ) : generateCodeModal.code ? (
  <div className="flex flex-col items-center gap-3">
  <div className="bg-white p-3 rounded-xl border border-indigo-100 shadow-sm inline-block">
- <QRCodeSVG value={batchQrUrl(generateCodeModal.code)} size={140} style={{ width: '140px', height: '140px' }} level="M" includeMargin={false} />
+ <QRCodeSVG value={batchQrUrl(generateCodeModal.code, generateCodeModal.batch?.id)} size={140} style={{ width: '140px', height: '140px' }} level="M" includeMargin={false} />
  </div>
  <div>
  <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Batch Code</p>

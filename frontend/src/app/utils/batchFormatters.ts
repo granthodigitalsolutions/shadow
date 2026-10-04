@@ -13,6 +13,14 @@ export function formatBatchName(batch: Batch): string {
   const programLabel = batch.programType === "SELAMBAM" ? "Silambam" : "Karate";
   const isIndividual = batch.schoolId === "individual";
 
+  // Generated batches carry their exact transition: "Karate — White → Yellow".
+  // An admin-given custom name still wins; old batches keep "Batch #X".
+  const transitionLabel = (batch as any).transitionLabel as string | undefined;
+  if (transitionLabel && !(batch.customName || "").trim()) {
+    const named = `${programLabel} — ${transitionLabel}`;
+    return isIndividual ? `${named} - Individual` : named;
+  }
+
   // Use custom name if provided, otherwise use default "Batch #X"
   const baseName = (batch.customName || "").trim() || `Batch #${batchNumber}`;
 
@@ -35,6 +43,12 @@ export function formatBatchNameShort(batch: Batch): string {
   const batchNumber = batch.batchNumber || 0;
   const programLabel = batch.programType === "SELAMBAM" ? "Silambam" : "Karate";
   const isIndividual = batch.schoolId === "individual";
+
+  const transitionLabel = (batch as any).transitionLabel as string | undefined;
+  if (transitionLabel && !(batch.customName || "").trim()) {
+    const named = `${programLabel} — ${transitionLabel}`;
+    return isIndividual ? `${named} I` : named;
+  }
 
   // Use custom name if provided, otherwise use default "Batch #X"
   const baseName = (batch.customName || "").trim() || `Batch #${batchNumber}`;
@@ -71,12 +85,30 @@ export function formatSafeDate(dateVal: any): string {
   return parsed.toLocaleDateString();
 }
 
+// The deployed site. A QR printed from a developer machine must never point at
+// localhost or a private address, so those fall back to this domain. Set
+// VITE_PUBLIC_APP_URL to override it (e.g. for a staging site).
+const DEPLOYED_ORIGIN = "https://teamshadowkai.com";
+const isNonPublicOrigin = (o: string) =>
+  /^https?:\/\/(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|[^/]*\.local)/i.test(o) || !/^https:/i.test(o);
+
+export const publicAppOrigin = (): string => {
+  const configured = (import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined;
+  if (configured) return configured.replace(/\/+$/, "");
+  const here = typeof window !== "undefined" ? window.location.origin : "";
+  return here && !isNonPublicOrigin(here) ? here : DEPLOYED_ORIGIN;
+};
+
 /**
- * What a Batch QR encodes: a link to the Examiner entry route on whichever
- * domain the Admin app is served from (teamshadowk.com in production). It
- * carries only the same 6-digit batch code that is printed on the sheet - no
- * password or token - and the server still verifies it and issues a
- * short-lived, signed examiner session.
+ * What a Batch QR encodes: a link to the Examiner entry route on the deployed
+ * HTTPS domain, naming the intended batch (stable id) and carrying that
+ * batch's access code. There is no password or permanent credential in it: the
+ * server checks the code belongs to that very batch and then issues a
+ * short-lived signed session. Regenerating the batch code revokes old QRs.
  */
-export const batchQrUrl = (code: string): string =>
-  `${typeof window !== 'undefined' ? window.location.origin : ''}/examiner?code=${encodeURIComponent(code)}`;
+export const batchQrUrl = (code: string, batchId?: string): string => {
+  const params = new URLSearchParams();
+  if (batchId) params.set("batchId", batchId);
+  params.set("code", code);
+  return `${publicAppOrigin()}/examiner/scan?${params.toString()}`;
+};

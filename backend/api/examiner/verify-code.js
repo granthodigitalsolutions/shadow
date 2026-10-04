@@ -15,7 +15,7 @@ const handler = async (req, res) => {
 
   const jwtSecret = requireJwtSecret();
 
-  const { code } = req.body;
+  const { code, batchId } = req.body;
   const trimmedCode = typeof code === 'string' ? code.trim() : '';
 
   if (!/^\d{6}$/.test(trimmedCode)) {
@@ -25,10 +25,15 @@ const handler = async (req, res) => {
   const snapshot = await db.collection('batches').where('code', '==', trimmedCode).limit(1).get();
 
   if (snapshot.empty) {
-    throw new NotFoundError('No batch found for this code. Please check and try again.');
+    throw new NotFoundError('This code or QR is not valid. It may have been replaced or the batch removed - ask an Admin for the current QR.');
   }
 
   const batchDoc = snapshot.docs[0];
+  // A QR names its batch: the code must belong to exactly that batch, so a
+  // copied or stale QR can never open a different one.
+  if (batchId !== undefined && (typeof batchId !== 'string' || batchDoc.id !== batchId)) {
+    throw new NotFoundError('This QR does not match the batch it was printed for. Ask an Admin for the current QR.');
+  }
   const { summary } = await buildBatchSummary(batchDoc);
 
   const token = jwt.sign({ batchId: batchDoc.id, examinerId: crypto.randomUUID() }, jwtSecret, { expiresIn: TOKEN_EXPIRY });
