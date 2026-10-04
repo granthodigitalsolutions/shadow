@@ -2,6 +2,7 @@ import jsPDF from 'jspdf';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QRCodeSVG } from 'qrcode.react';
 import { batchQrUrl } from './batchFormatters';
+import { pdfSafe } from './paymentReport';
 import { PDF_COLORS, drawBrandHeader, truncateText } from './pdfBranding';
 
 export interface BatchQrPdfInfo {
@@ -71,22 +72,27 @@ export function buildBatchQrPdf(qrPngDataUrl: string, info: BatchQrPdfInfo): jsP
   let y = headerBottom + 20;
   doc.setTextColor(...PDF_COLORS.primary);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(24);
-  doc.text(truncateText(info.batchName, 40), centerX, y, { align: 'center' });
+  // pdfSafe: the built-in PDF font has no arrow glyph, which printed as "!'" and
+  // broke the text spacing; the name is written as "White to Yellow" instead.
+  // The size shrinks until the whole name fits the page width (never clipped).
+  const title = pdfSafe(info.batchName);
+  let titleSize = 24;
+  doc.setFontSize(titleSize);
+  while (titleSize > 12 && doc.getTextWidth(title) > pw - margin * 2) {
+    titleSize -= 1;
+    doc.setFontSize(titleSize);
+  }
+  doc.text(truncateText(title, 90), centerX, y, { align: 'center' });
 
   const meta: string[] = [];
-  if (info.schoolName) meta.push(info.schoolName);
-  if (info.testName) meta.push(info.testName);
+  if (info.schoolName) meta.push(pdfSafe(info.schoolName));
+  if (info.testName) meta.push(pdfSafe(info.testName));
   y += 8;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(12);
   doc.setTextColor(...PDF_COLORS.gray);
   if (meta.length > 0) {
     doc.text(truncateText(meta.join('  |  '), 80), centerX, y, { align: 'center' });
-    y += 7;
-  }
-  if (info.studentCount != null) {
-    doc.text(`${info.studentCount} student${info.studentCount === 1 ? '' : 's'}`, centerX, y, { align: 'center' });
     y += 7;
   }
 

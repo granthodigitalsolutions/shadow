@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PDF_COLORS, drawBrandHeader, truncateText } from '../pdfBranding';
+import { pdfSafe } from '../paymentReport';
 
 export type ResultStatusLabel = 'PASSED' | 'FAILED' | 'PENDING';
 
@@ -99,7 +100,7 @@ export function buildResultsReportPdf(opts: ResultsReportOptions): jsPDF {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
   const generatedAt = new Date().toLocaleString();
 
-  const bandSubtitle = scopeLabel ? truncateText(scopeLabel, 60) : undefined;
+  const bandSubtitle = scopeLabel ? truncateText(pdfSafe(scopeLabel), 60) : undefined;
   drawBrandHeader(doc, { pageWidth: PAGE_W, title, subtitle: bandSubtitle, height: HEADER_H, margin: MARGIN });
 
   // ── Info strip (first page only) ───────────────────────────────────────────
@@ -118,7 +119,7 @@ export function buildResultsReportPdf(opts: ResultsReportOptions): jsPDF {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
     doc.setTextColor(...PDF_COLORS.primary);
-    doc.text(fitText(doc, item.value || '-', colW - 6), x, iy + 5);
+    doc.text(fitText(doc, pdfSafe(item.value || '-'), colW - 6), x, iy + 5);
   });
   y += Math.ceil(infoItems.length / 4) * 10 + 2;
 
@@ -128,13 +129,13 @@ export function buildResultsReportPdf(opts: ResultsReportOptions): jsPDF {
   type Col = { header: string; get: (r: ResultsReportRow, i: number) => string; width?: number; align?: 'center' | 'left'; key: string };
   const columns: Col[] = [
     { key: 'no', header: '#', get: (_r, i) => String(i + 1), width: 9, align: 'center' },
-    { key: 'id', header: 'Student ID', get: (r) => r.studentId, width: 34 },
+    { key: 'id', header: 'Student ID', get: (r) => r.studentId, width: 32 },
     { key: 'name', header: 'Name', get: (r) => r.name },
     { key: 'gender', header: 'Gender', get: (r) => r.gender, width: 15 },
     ...(showSchoolColumn ? [{ key: 'school', header: 'School', get: (r: ResultsReportRow) => r.school } as Col] : []),
-    { key: 'std', header: 'Std', get: (r) => r.standard, width: 12, align: 'center' },
+    { key: 'std', header: 'Std', get: (r) => r.standard, width: 21, align: 'center' },
     { key: 'belt', header: 'Belt/Stage', get: (r) => r.beltStage, width: 22 },
-    ...(showBatchColumn ? [{ key: 'batch', header: 'Batch', get: (r: ResultsReportRow) => r.batch, width: 32 } as Col] : []),
+    ...(showBatchColumn ? [{ key: 'batch', header: 'Batch', get: (r: ResultsReportRow) => r.batch, width: 46 } as Col] : []),
     { key: 'status', header: 'Status', get: (r) => r.status, width: 20, align: 'center' },
     { key: 'score', header: 'Score', get: (r) => r.score, width: 14, align: 'center' },
     { key: 'pct', header: '%', get: (r) => r.percentage, width: 15, align: 'center' },
@@ -143,7 +144,9 @@ export function buildResultsReportPdf(opts: ResultsReportOptions): jsPDF {
   ];
 
   const body = rows.length > 0
-    ? rows.map((r, i) => columns.map((c) => c.get(r, i)))
+    // pdfSafe: the built-in PDF font has no arrow glyph ("White → Yellow" printed as
+    // garbled, letter-spaced text); it is written as "White to Yellow" instead.
+    ? rows.map((r, i) => columns.map((c) => pdfSafe(c.get(r, i))))
     : [[{ content: 'No students to show', colSpan: columns.length, styles: { halign: 'center', textColor: PDF_COLORS.gray } }]];
 
   const columnStyles: Record<number, any> = {};

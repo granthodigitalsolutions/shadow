@@ -73,7 +73,7 @@ export default function StickerPrinting() {
   const [allStudents, setAllStudents] = useState<StudentRecord[]>([]);
   // Complete from → to transitions from the Admin fee configuration (same source as registration).
   const { karate: karateT, silambam: silambamT } = useExamTransitions();
-  const transitionOptions = useMemo(
+  const configuredOptions = useMemo(
     () => transitionFilterOptions(currentProgram === 'SELAMBAM' ? 'SELAMBAM' : currentProgram === 'KARATE' ? 'KARATE' : 'all', karateT, silambamT),
     [currentProgram, karateT, silambamT],
   );
@@ -158,6 +158,20 @@ export default function StickerPrinting() {
     setStickerStatusFilter("all");
     setSelectedStudentIds(new Set());
   };
+
+  // Configured transitions, plus the levels students actually hold that are not a configured
+  // transition (e.g. the initial Silambam stage), so every student can be found by the filter.
+  const transitionOptions = useMemo(() => {
+    const known = new Set(configuredOptions.map((o) => o.key));
+    const extra = new Map<string, string>();
+    allStudents.forEach((st) => {
+      const t = resolveStudentTransition(st as any, karateT, silambamT);
+      if (!known.has(t.key) && !extra.has(t.key)) {
+        extra.set(t.key, /^\d+$/.test(t.label) ? `Stage ${t.label}` : t.label);
+      }
+    });
+    return [...configuredOptions, ...[...extra.entries()].filter(([, l]) => l && l !== "—").sort((a, b) => a[1].localeCompare(b[1])).map(([key, label]) => ({ key, label }))];
+  }, [configuredOptions, allStudents, karateT, silambamT]);
 
   // Memoized filtered students
   const filteredStudents = useMemo(() => {
