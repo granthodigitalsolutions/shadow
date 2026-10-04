@@ -83,7 +83,7 @@ export default function RegisterPage({ onNavigate, onStudentUpdate }: RegisterPa
  const [loading, setLoading] = useState(true);
  const [loadingSchools, setLoadingSchools] = useState(true);
  const [individualModeEnabled, setIndividualModeEnabled] = useState(false);
- const [studentRegistrationEnabled, setStudentRegistrationEnabled] = useState(true);
+ const [studentRegistrationEnabled, setStudentRegistrationEnabled] = useState(false);
  const [showIndividualWarning, setShowIndividualWarning] = useState(false);
  const [isProcessing, setIsProcessing] = useState(false);
  const { showToast } = useToast();
@@ -108,7 +108,7 @@ export default function RegisterPage({ onNavigate, onStudentUpdate }: RegisterPa
  }))
  );
  setIndividualModeEnabled(settings.individualModeEnabled);
- setStudentRegistrationEnabled(settings.studentRegistrationEnabled !== false);
+ setStudentRegistrationEnabled(settings.studentRegistrationEnabled === true);
  } catch (error) {
  console.error('Error fetching data:', error);
  } finally {

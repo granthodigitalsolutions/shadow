@@ -20,7 +20,9 @@ service cloud.firestore {
     function isStudentRegistrationEnabled(programType) {
       let docId = programType == 'KARATE' ? 'systemSettings_KARATE' : (programType == 'SELAMBAM' ? 'systemSettings_SELAMBAM' : 'systemSettings');
       let settings = get(/databases/$(database)/documents/settings/$(docId));
-      return settings == null || settings.data.studentRegistrationEnabled != false;
+      // Off unless an admin has explicitly switched it on (a missing settings doc means off).
+      return exists(/databases/$(database)/documents/settings/$(docId)) &&
+        settings.data.get('studentRegistrationEnabled', false) == true;
     }
 
     function isSecretary() {

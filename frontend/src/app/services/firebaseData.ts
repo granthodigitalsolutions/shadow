@@ -1356,7 +1356,8 @@ export const firebaseAdminSettingsService = {
 
     const defaultSettings: AdminSettings = {
       individualModeEnabled: false,
-      studentRegistrationEnabled: true,
+      // Registration stays OFF until an admin switches it on.
+      studentRegistrationEnabled: false,
       updatedAt: new Date().toISOString(),
     };
 

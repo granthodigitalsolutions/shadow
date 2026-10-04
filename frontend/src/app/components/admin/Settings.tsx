@@ -246,7 +246,7 @@ export default function SettingsNew() {
  <SettingToggle
  title="Student Registration"
  description="Enable or disable new student registrations globally"
- enabled={settings?.studentRegistrationEnabled ?? true}
+ enabled={settings?.studentRegistrationEnabled ?? false}
  onToggle={() => handleToggle('studentRegistrationEnabled')}
  saving={saving}
  info={[

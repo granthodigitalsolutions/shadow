@@ -150,14 +150,18 @@ export default function ManageBeltTests() {
  </div>
  <div className="grid sm:grid-cols-2 gap-4 text-sm bg-zinc-50 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 dark:bg-zinc-900 rounded-xl p-4 border border-zinc-100 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800">
  <div className="space-y-2">
+ {test.date && !isNaN(new Date(test.date).getTime()) && (
  <p className="flex flex-wrap justify-between items-center gap-3">
  <span className="font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider text-xs">Date</span>
  <span className="font-semibold text-zinc-900 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50">{new Date(test.date).toLocaleDateString()}</span>
  </p>
+ )}
+ {test.time && (
  <p className="flex flex-wrap justify-between items-center gap-3">
  <span className="font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider text-xs">Time</span>
  <span className="font-semibold text-zinc-900 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50">{test.time}</span>
  </p>
+ )}
  <p className="flex flex-wrap justify-between items-center gap-3">
  <span className="font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider text-xs">Test ID</span>
  <span className="font-mono text-xs text-zinc-600 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 bg-zinc-200 px-2 py-0.5 rounded">{test.id.slice(0, 8)}...</span>

@@ -276,7 +276,7 @@ export default function SelambamRegisterPage({ onNavigate, onStudentUpdate }: Se
  const [loading, setLoading] = useState(true);
  const [loadingSchools, setLoadingSchools] = useState(true);
  const [individualModeEnabled, setIndividual] = useState(false);
- const [studentRegistrationEnabled, setStudentRegistrationEnabled] = useState(true);
+ const [studentRegistrationEnabled, setStudentRegistrationEnabled] = useState(false);
  const [showIndividualWarning, setShowWarning] = useState(false);
  const [activeBeltTest, setActiveBeltTest] = useState<any>(null);
  const [isProcessing, setIsProcessing] = useState(false);
@@ -300,7 +300,7 @@ export default function SelambamRegisterPage({ onNavigate, onStudentUpdate }: Se
  }))
  );
  setIndividual(settings.individualModeEnabled);
- setStudentRegistrationEnabled(settings.studentRegistrationEnabled !== false);
+ setStudentRegistrationEnabled(settings.studentRegistrationEnabled === true);
  setActiveBeltTest(test);
  // Default to first active stage
  if (fees.length > 0) setSelectedStage(fees[0].stageNumber);
