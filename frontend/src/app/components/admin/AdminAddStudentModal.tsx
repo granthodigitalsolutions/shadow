@@ -31,7 +31,8 @@ export default function AdminAddStudentModal({ currentProgram, onClose, onCreate
   const { karate, silambam, loading: transitionsLoading, error: transitionsError } = useExamTransitions();
 
   const [program, setProgram] = useState<"KARATE" | "SELAMBAM">(currentProgram === "SELAMBAM" ? "SELAMBAM" : "KARATE");
-  const [regType, setRegType] = useState<"school" | "individual">("school");
+  // Admin-added students are always school registrations, and are recorded as paid.
+  const regType = "school" as const;
   const [schools, setSchools] = useState<School[]>([]);
   const [activeTest, setActiveTest] = useState<BeltTest | null>(null);
   const [testChecked, setTestChecked] = useState(false);
@@ -43,7 +44,7 @@ export default function AdminAddStudentModal({ currentProgram, onClose, onCreate
   const [whatsapp, setWhatsapp] = useState("");
   const [contact, setContact] = useState("");
   const [transitionKey, setTransitionKey] = useState("");
-  const [paid, setPaid] = useState<"pending" | "verified">("pending");
+  const paid = "verified" as const;
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +73,7 @@ export default function AdminAddStudentModal({ currentProgram, onClose, onCreate
   const validate = (): string | null => {
     if (!activeTest) return "There is no active belt test for this program. Activate one first (Belt Tests).";
     if (!name.trim()) return "Student name is required.";
-    if (regType === "school" && !schoolId) return "Select a school (or choose Individual).";
+    if (!schoolId) return "Select a school.";
     if (!gender) return "Select a gender.";
     if (!standard) return "Select a standard.";
     if (!/^\d{10}$/.test(whatsapp)) return "Parent WhatsApp must be exactly 10 digits.";
@@ -107,8 +108,8 @@ export default function AdminAddStudentModal({ currentProgram, onClose, onCreate
         name: name.trim(),
         gender,
         registrationType: regType,
-        schoolId: regType === "individual" ? "individual" : schoolId,
-        school: regType === "individual" ? "Individual" : school ? (school.branch ? `${school.name} - ${school.branch}` : school.name) : "",
+        schoolId,
+        school: school ? (school.branch ? `${school.name} - ${school.branch}` : school.name) : "",
         standard,
         contact: contact ? `+91${contact}` : "",
         whatsapp: `+91${whatsapp}`,
@@ -133,13 +134,11 @@ export default function AdminAddStudentModal({ currentProgram, onClose, onCreate
           paymentDate: new Date().toISOString(),
           testDate: activeTest.date || "",
           testTime: activeTest.time || "",
-          ...(paid === "verified" ? { confirmationType: "admin_manual" } : {}),
+          confirmationType: "admin_manual",
         },
       };
-      if (paid === "verified") {
-        record.confirmedBy = adminUid;
-        record.confirmedAt = new Date();
-      }
+      record.confirmedBy = adminUid;
+      record.confirmedAt = new Date();
       Object.keys(record).forEach((k) => record[k] === undefined && delete record[k]);
 
       await firebaseStudentService.add(record);
@@ -182,14 +181,7 @@ export default function AdminAddStudentModal({ currentProgram, onClose, onCreate
                 </select>
               </div>
             )}
-            <div>
-              <label className={label}>Registration type</label>
-              <select value={regType} onChange={(e) => setRegType(e.target.value as any)} className={input}>
-                <option value="school">School student</option>
-                <option value="individual">Individual</option>
-              </select>
-            </div>
-            {regType === "school" && (
+            {(
               <div className="sm:col-span-2">
                 <label className={label}>School *</label>
                 <select value={schoolId} onChange={(e) => setSchoolId(e.target.value)} className={input}>
@@ -241,13 +233,6 @@ export default function AdminAddStudentModal({ currentProgram, onClose, onCreate
                 })}
               </select>
               {transition?.feeConfigured && <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 mt-1.5">Registration fee: {formatINR(transition.fee)}</p>}
-            </div>
-            <div className="sm:col-span-2">
-              <label className={label}>Payment status</label>
-              <select value={paid} onChange={(e) => setPaid(e.target.value as any)} className={input}>
-                <option value="pending">Pending - not yet paid</option>
-                <option value="verified">Confirmed - payment received (admin confirmation)</option>
-              </select>
             </div>
           </div>
         </div>
