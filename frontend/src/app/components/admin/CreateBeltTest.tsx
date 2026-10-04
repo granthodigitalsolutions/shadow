@@ -15,8 +15,6 @@ export default function CreateBeltTest() {
  currentProgram === 'SELAMBAM' ? 'SELAMBAM' : 'KARATE'
  );
  const [name, setName] = useState("");
- const [date, setDate] = useState("");
- const [time, setTime] = useState("");
  const [isActive, setIsActive] = useState(true);
  const [saving, setSaving] = useState(false);
 
@@ -38,10 +36,10 @@ export default function CreateBeltTest() {
  const handleSubmit = async (e: React.FormEvent) => {
  e.preventDefault();
 
- if (!name.trim() || !date || !time) {
+ if (!name.trim()) {
  await showAlert({
  title: "Missing Details",
- message: "Please fill in all required fields: name, date, and time.",
+ message: "Please enter the test name.",
  variant: "warning",
  });
  return;
@@ -63,8 +61,8 @@ export default function CreateBeltTest() {
 
  const payload: any = {
  name: name.trim(),
- date,
- time,
+ date: "", // date/time are no longer collected here; kept empty so existing screens still get a string
+ time: "",
  isActive,
  belts: [],
  scoringParameters: [],
@@ -131,36 +129,6 @@ export default function CreateBeltTest() {
  placeholder={programType === 'KARATE' ? 'e.g., April 2026 Belt Test' : 'e.g., April 2026 Stage Test'}
  required
  />
- </div>
-
- <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
- {/* Date */}
- <div>
- <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-1.5">
- Test Date *
- </label>
- <input
- type="date"
- value={date}
- onChange={(e) => setDate(e.target.value)}
- className="w-full px-4 py-3 border-2 border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-xl focus:border-blue-500 focus:outline-none font-semibold text-zinc-900 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
- required
- />
- </div>
-
- {/* Time */}
- <div>
- <label className="block text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-1.5">
- Test Time *
- </label>
- <input
- type="time"
- value={time}
- onChange={(e) => setTime(e.target.value)}
- className="w-full px-4 py-3 border-2 border-zinc-200 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 dark:border-zinc-800 rounded-xl focus:border-blue-500 focus:outline-none font-semibold text-zinc-900 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 dark:text-zinc-50 bg-transparent dark:bg-zinc-900 dark:text-zinc-50"
- required
- />
- </div>
  </div>
 
  {/* Active Toggle */}
