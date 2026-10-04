@@ -80,7 +80,13 @@ export default function PaymentManagement() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
-  const [filters, setFilters] = useState<ReportFilters>(DEFAULT_FILTERS);
+  const [rawFilters, setFilters] = useState<ReportFilters>(DEFAULT_FILTERS);
+  // Inside the Karate or Silambam admin area, only that program is ever shown.
+  const lockedProgram = currentProgram === "KARATE" || currentProgram === "SELAMBAM" ? currentProgram : null;
+  const filters = useMemo<ReportFilters>(
+    () => ({ ...rawFilters, program: lockedProgram ?? rawFilters.program }),
+    [rawFilters, lockedProgram],
+  );
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [pageSize, setPageSize] = useState(25);
@@ -189,7 +195,7 @@ export default function PaymentManagement() {
     };
   }, [allRows, filters]);
 
-  const isFiltered = JSON.stringify(filters) !== JSON.stringify(DEFAULT_FILTERS) || tab === "recent";
+  const isFiltered = JSON.stringify(filters) !== JSON.stringify({ ...DEFAULT_FILTERS, program: lockedProgram ?? "all" }) || tab === "recent";
 
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -438,11 +444,13 @@ export default function PaymentManagement() {
               {coachOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               <option value={NO_COACH}>No coach (individual)</option>
             </select>
+            {!lockedProgram && (
             <select value={filters.program} onChange={(e) => setFilters((f) => ({ ...f, program: e.target.value as any, transition: "all" }))} className={selectCls} aria-label="Exam type">
               <option value="all">Karate &amp; Silambam</option>
               <option value="KARATE">Karate</option>
               <option value="SELAMBAM">Silambam</option>
             </select>
+            )}
             <select value={filters.transition} onChange={(e) => setFilter("transition", e.target.value)} className={selectCls} aria-label="Belt or stage transition">
               <option value="all">All Belt / Stage Transitions</option>
               {transitionOptions.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
