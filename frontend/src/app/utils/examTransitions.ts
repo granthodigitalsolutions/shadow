@@ -119,7 +119,12 @@ export function resolveStudentTransition(s: StudentLike, karate: ExamTransition[
   const level = s.beltLevel || (s.stageLevel != null && s.stageLevel !== "" ? `Stage ${s.stageLevel}` : "");
   const st = s.examTransition;
   if (st && st.feeId) {
-    return { key: st.feeId, label: st.from ? `${st.from} → ${st.to}` : st.to, from: st.from ?? null, source: "stored" };
+    const label = st.from ? `${st.from} → ${st.to}` : st.to;
+    // The fee documents can be re-created (new ids) after a student registered. Map the
+    // stored transition to the same configured transition by its from/to names, so one
+    // transition is never listed twice with different keys.
+    const current = list.find((t) => t.id === st.feeId) || list.find((t) => t.label === label);
+    return { key: current ? current.id : st.feeId, label, from: st.from ?? null, source: "stored" };
   }
   const matched = program === "KARATE"
     ? list.find((t) => t.to === s.beltLevel)

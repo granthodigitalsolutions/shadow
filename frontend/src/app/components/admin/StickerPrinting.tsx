@@ -163,10 +163,11 @@ export default function StickerPrinting() {
   // transition (e.g. the initial Silambam stage), so every student can be found by the filter.
   const transitionOptions = useMemo(() => {
     const known = new Set(configuredOptions.map((o) => o.key));
+    const knownLabels = new Set(configuredOptions.map((o) => o.label.replace(/^(Karate|Silambam): /, "")));
     const extra = new Map<string, string>();
     allStudents.forEach((st) => {
       const t = resolveStudentTransition(st as any, karateT, silambamT);
-      if (!known.has(t.key) && !extra.has(t.key)) {
+      if (!known.has(t.key) && !knownLabels.has(t.label) && !extra.has(t.key)) {
         extra.set(t.key, /^\d+$/.test(t.label) ? `Stage ${t.label}` : t.label);
       }
     });
