@@ -60,6 +60,8 @@ export interface ExaminerCapacity {
 export interface VerifyCodeResponse {
   success: boolean;
   token?: string;
+  /** Scoped Firebase token for the read-only live capacity listener. */
+  firebaseToken?: string | null;
   batch?: ExaminerBatch;
   message?: string;
 }
@@ -266,6 +268,7 @@ export interface RecoverResponse {
   success: boolean;
   result?: "recovered" | "invalid" | "no_allocation" | "capacity_exhausted";
   token?: string;
+  firebaseToken?: string | null;
   allocationId?: string;
   recoveryKey?: string | null;
   capacity?: ExaminerCapacity;
@@ -304,6 +307,11 @@ export async function removeExaminerStudent(
 // Marks this examiner's session as started (locks removal server-side).
 export async function startExaminerExam(): Promise<{ ok: boolean; status: number; data: CapacityResponse }> {
   return examinerFetch<CapacityResponse>("/start-exam", { method: "POST" });
+}
+
+// Live capacity for this batch + this examiner's allocation (polled by the roster).
+export async function getExaminerCapacity(): Promise<{ ok: boolean; status: number; data: CapacityResponse & { batchStatus?: string | null } }> {
+  return examinerFetch<CapacityResponse & { batchStatus?: string | null }>("/capacity", { method: "GET" });
 }
 
 export interface ScanStudentResponse {

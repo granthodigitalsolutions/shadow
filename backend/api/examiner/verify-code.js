@@ -6,6 +6,7 @@ const { db } = require('../../src/config/firebase');
 const { ValidationError, NotFoundError } = require('../../src/utils/errors');
 const { TOKEN_EXPIRY, requireJwtSecret } = require('../../src/config/examinerAuth');
 const { buildBatchSummary } = require('../../src/utils/examinerBatch');
+const { mintExaminerFirebaseToken } = require('../../src/utils/examinerFirebase');
 const logger = require('../../src/utils/logger');
 
 const handler = async (req, res) => {
@@ -36,7 +37,9 @@ const handler = async (req, res) => {
   }
   const { summary } = await buildBatchSummary(batchDoc);
 
-  const token = jwt.sign({ batchId: batchDoc.id, examinerId: crypto.randomUUID() }, jwtSecret, { expiresIn: TOKEN_EXPIRY });
+  const examinerId = crypto.randomUUID();
+  const firebaseToken = await mintExaminerFirebaseToken({ batchId: batchDoc.id, examinerId });
+  const token = jwt.sign({ batchId: batchDoc.id, examinerId }, jwtSecret, { expiresIn: TOKEN_EXPIRY });
 
   logger.info('Examiner verified batch code', {
     batchId: batchDoc.id,
@@ -46,6 +49,7 @@ const handler = async (req, res) => {
   res.status(200).json({
     success: true,
     token,
+    firebaseToken,
     batch: summary
   });
 };

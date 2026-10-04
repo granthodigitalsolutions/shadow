@@ -9,7 +9,15 @@ service cloud.firestore {
 
     // Helper Functions
     function isAuthenticated() {
-      return request.auth != null;
+      // Examiner live-view tokens (see isExaminerFor) carry the examinerBatchId claim and are
+      // deliberately NOT "authenticated" for any other rule below.
+      return request.auth != null && request.auth.token.get('examinerBatchId', '') == '';
+    }
+
+    // An examiner's scoped Firebase token (minted by the backend after the batch code is
+    // verified): may only read its own batch's counters and its own allocation.
+    function isExaminerFor(batchId) {
+      return request.auth != null && request.auth.token.get('examinerBatchId', '') == batchId;
     }
 
     function isAdmin() {
@@ -237,7 +245,13 @@ service cloud.firestore {
 
     // Batches
     match /batches/{batchId} {
-      allow read: if isAdmin() || isSecretary() || isCoach();
+      allow get: if isAdmin() || isSecretary() || isCoach() || isExaminerFor(batchId);
+      allow list: if isAdmin() || isSecretary() || isCoach();
+
+      // Examiner allocations: backend-written; an examiner may read only their own.
+      match /allocations/{allocId} {
+        allow get: if isExaminerFor(batchId) && request.auth.token.get('examinerId', '') == allocId;
+      }
       allow create, delete: if isAdmin() || isSecretary() || isCoach();
       allow update: if isAdmin() || isSecretary() || isCoach();
 

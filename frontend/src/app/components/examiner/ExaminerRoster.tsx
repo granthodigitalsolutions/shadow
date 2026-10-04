@@ -2,9 +2,10 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Users, LogOut, ArrowRight, Loader2, AlertCircle, ClipboardList, Camera, CheckCircle2, X, QrCode, UserPlus, Trash2 } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
-import { getExaminerStudents, scanExaminerStudent, allocateExaminerSlots, removeExaminerStudent, startExaminerExam, recoverExaminerSession, loadRecoveryHint, saveRecoveryHint, ExaminerBatch, ExaminerStudent, ExaminerCapacity } from "../../services/examinerApi";
+import { getExaminerStudents, scanExaminerStudent, allocateExaminerSlots, removeExaminerStudent, startExaminerExam, recoverExaminerSession, getExaminerCapacity, loadRecoveryHint, saveRecoveryHint, ExaminerBatch, ExaminerStudent, ExaminerCapacity } from "../../services/examinerApi";
 import { formatBatchName } from "../../utils/batchFormatters";
 import { ThemeToggle } from "../ui/ThemeToggle";
+import { subscribeExaminerCapacity, examinerIdFromSession } from "../../services/examinerLive";
 import { playSuccessBeep, unlockScanBeep } from "../../utils/scanBeep";
 
 // Ignore an identical re-decode of a QR still sitting in frame — the scan
@@ -104,6 +105,61 @@ export default function ExaminerRoster() {
     }
   };
 
+  // Keep "available" live: other examiners on this batch take slots at the same time.
+  // Examiners aren't Firebase-signed-in (they use a batch session token), so a Firestore
+  // listener isn't possible; a light server read every few seconds gives the same effect.
+  const busyForPoll = allocBusy || recoverBusy;
+
+  // Real-time: Firestore onSnapshot on this batch's counters and this examiner's allocation.
+  const [liveOn, setLiveOn] = useState(false);
+  useEffect(() => {
+    if (loading || error || !batch?.id) return;
+    const fbToken = localStorage.getItem("examinerFbToken");
+    const examinerId = examinerIdFromSession(localStorage.getItem("examinerToken"));
+    if (!fbToken || !examinerId) return;
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
+    subscribeExaminerCapacity({
+      batchId: batch.id,
+      examinerId,
+      firebaseToken: fbToken,
+      onData: (capacity, status) => {
+        if (cancelled) return;
+        setLiveOn(true);
+        setCapacityInfo(capacity);
+        if (status) setBatch((prev) => (prev ? { ...prev, status } : prev));
+      },
+      onError: () => { if (!cancelled) setLiveOn(false); }, // fall back to polling
+    })
+      .then((u) => { if (cancelled) u(); else unsubscribe = u; })
+      .catch(() => { if (!cancelled) setLiveOn(false); });
+    return () => { cancelled = true; setLiveOn(false); unsubscribe?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, error, batch?.id]);
+
+  // Fallback only: poll when the live listener is not running.
+  useEffect(() => {
+    if (loading || error || liveOn) return;
+    let stopped = false;
+    const refresh = async () => {
+      if (stopped || document.visibilityState !== "visible" || busyForPoll) return;
+      try {
+        const { status, data } = await getExaminerCapacity();
+        if (stopped) return;
+        if (status === 401) { navigate("/examiner", { replace: true }); return; }
+        if (data.success && data.capacity) {
+          setCapacityInfo(data.capacity);
+          if (data.batchStatus) setBatch((prev) => (prev ? { ...prev, status: data.batchStatus } : prev));
+        }
+      } catch { /* a missed poll is harmless - the next one corrects it */ }
+    };
+    const timer = window.setInterval(refresh, 5000);
+    const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { stopped = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, error, busyForPoll, liveOn]);
+
   const pendingStudents = students.filter((s) => s.testStatus === "pending");
   const capacity = batch?.maxSize ?? students.length;
   // Students can only be added into this examiner's own reserved slots.
@@ -128,6 +184,7 @@ export default function ExaminerRoster() {
       }
       if (data.result === "recovered" && data.token) {
         localStorage.setItem("examinerToken", data.token);
+        if (data.firebaseToken) localStorage.setItem("examinerFbToken", data.firebaseToken);
         if (batch && data.allocationId && data.recoveryKey) saveRecoveryHint(batch, data.allocationId, data.recoveryKey);
         setRecoverOpen(false);
         setRecoverName("");
@@ -202,6 +259,7 @@ export default function ExaminerRoster() {
 
   const handleExit = () => {
     localStorage.removeItem("examinerToken");
+    localStorage.removeItem("examinerFbToken");
     localStorage.removeItem("examinerBatch");
     localStorage.removeItem("examinerSessionQueue");
     localStorage.removeItem("examinerSessionIndex");

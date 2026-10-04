@@ -85,6 +85,8 @@ export default function ExaminerEntry() {
       if (data.success && data.token && data.batch) {
         localStorage.setItem("examinerToken", data.token);
         localStorage.setItem("examinerBatch", JSON.stringify(data.batch));
+        if (data.firebaseToken) localStorage.setItem("examinerFbToken", data.firebaseToken);
+        else localStorage.removeItem("examinerFbToken");
 
         // Returning examiner: ask the server to re-attach this new session to
         // the allocation they already hold. The saved hint is only a lookup
@@ -99,6 +101,7 @@ export default function ExaminerEntry() {
             }
             if (rec.data.result === "recovered" && rec.data.token) {
               localStorage.setItem("examinerToken", rec.data.token);
+              if (rec.data.firebaseToken) localStorage.setItem("examinerFbToken", rec.data.firebaseToken);
               if (rec.data.recoveryKey && rec.data.allocationId) {
                 saveRecoveryHint(data.batch, rec.data.allocationId, rec.data.recoveryKey);
               }

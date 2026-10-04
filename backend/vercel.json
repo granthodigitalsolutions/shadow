@@ -14,7 +14,7 @@
       "destination": "/api/admin/payments?kind=batch"
     },
     {
-      "source": "/api/examiner/:action(allocate|remove-student|start-exam|recover)",
+      "source": "/api/examiner/:action(allocate|remove-student|start-exam|recover|capacity)",
       "destination": "/api/examiner/session?action=:action"
     }
   ]

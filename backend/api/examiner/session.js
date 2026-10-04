@@ -13,6 +13,7 @@ const actions = {
   'remove-student': require('../../src/handlers/examiner-remove-student').handler,
   'start-exam': require('../../src/handlers/examiner-start-exam').handler,
   recover: require('../../src/handlers/examiner-recover').handler,
+  capacity: require('../../src/handlers/examiner-capacity').handler,
 };
 
 const dispatch = (req, res) => {

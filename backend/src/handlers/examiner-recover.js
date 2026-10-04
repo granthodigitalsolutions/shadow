@@ -5,6 +5,7 @@ const { ValidationError, NotFoundError } = require('../utils/errors');
 const { TOKEN_EXPIRY, requireJwtSecret } = require('../config/examinerAuth');
 const { allocationsRef, buildCapacityView } = require('../utils/examinerBatch');
 const { newRecoveryKey, hashKey, keyMatches, normalizeName } = require('../utils/examinerRecovery');
+const { mintExaminerFirebaseToken } = require('../utils/examinerFirebase');
 const logger = require('../utils/logger');
 
 // Session recovery. The batch comes only from the verified token; the client
@@ -48,11 +49,13 @@ const handler = async (req, res) => {
       await col.doc(snap.id).update({ recoveryHash: alloc.recoveryHash, updatedAt: new Date().toISOString() });
     }
     const token = jwt.sign({ batchId, examinerId: snap.id }, requireJwtSecret(), { expiresIn: TOKEN_EXPIRY });
+    const firebaseToken = await mintExaminerFirebaseToken({ batchId, examinerId: snap.id });
     logger.info('Examiner session recovered', { batchId, allocationId: snap.id, correlationId: req.correlationId });
     return res.status(200).json({
       success: true,
       result: 'recovered',
       token,
+      firebaseToken,
       allocationId: snap.id,
       // Only present when a key was (re)issued; otherwise the browser keeps its own.
       recoveryKey: issuedKey,
