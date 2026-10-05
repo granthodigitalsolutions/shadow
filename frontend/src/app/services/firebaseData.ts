@@ -85,6 +85,7 @@ export const firebaseBeltTestService = {
   listenActive: (
     callback: (test: BeltTest | null) => void,
     programType?: "KARATE" | "SELAMBAM",
+    onError?: (error: Error) => void,
   ) => {
     const conditions = [where("isActive", "==", true)];
     if (programType) {
@@ -97,7 +98,7 @@ export const firebaseBeltTestService = {
       } else {
         callback({ id: snap.docs[0].id, ...snap.docs[0].data() } as BeltTest);
       }
-    });
+    }, (error) => onError?.(error));
   },
 
   getById: async (id: string): Promise<BeltTest | null> => {

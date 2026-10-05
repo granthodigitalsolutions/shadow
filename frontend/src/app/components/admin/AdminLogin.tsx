@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+﻿import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { LogIn, Shield, ArrowLeft, Mail, Lock } from "lucide-react";
 import { firebaseAuthService } from "../../services/firebaseAuth";
@@ -11,6 +11,14 @@ export default function AdminLogin() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Start downloading the admin area's code while the admin is typing, so it is
+  // ready the moment they sign in (these are the same chunks App.tsx lazy-loads).
+  useEffect(() => {
+    import("./ProtectedRoute");
+    import("./AdminLayout");
+    import("./AdminDashboard");
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,6 +34,8 @@ export default function AdminLogin() {
       if (user) {
         const isAdmin = await firebaseAdminAuthService.isAdmin(user.uid);
         if (isAdmin) {
+          // The admin area can now open without repeating this check (see ProtectedRoute).
+          sessionStorage.setItem("sk_admin_verified_uid", user.uid);
 //           console.log("[AUTH] Admin verified");
           navigate("/admin/karate/dashboard");
         } else {

@@ -32,6 +32,9 @@ export default function AdminDashboard() {
  const [batches, setBatches] = useState<any[]>([]);
  const [selectedBatch, setSelectedBatch] = useState<string>('ALL');
  const [loading, setLoading] = useState(true);
+ // The page opens as soon as the (small) active-test read is back; the student
+ // feed - the big download - fills the numbers in when it arrives.
+ const [studentsReady, setStudentsReady] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthAccessConfig | null>(null);
@@ -46,15 +49,15 @@ export default function AdminDashboard() {
  setSelectedBatch('ALL');
  setActiveBeltTest(null);
  setLoading(true);
+ setStudentsReady(false);
  setError(null);
  
   setLoading(true);
   
-  let studentsLoaded = false;
-  let testLoaded = false;
-  
-  const checkLoading = () => {
-    if (studentsLoaded && testLoaded) setLoading(false);
+  const onLoadError = (err: Error) => {
+    console.error("Dashboard data failed to load:", err);
+    setError(/permission/i.test(err?.message || "") ? "You don't have permission to view this data." : "Couldn't load the dashboard data.");
+    setLoading(false);
   };
   
 
@@ -65,15 +68,13 @@ export default function AdminDashboard() {
   
   const unsubStudents = firebaseStudentService.listenAll((data) => {
     setStudents(data);
-    studentsLoaded = true;
-    checkLoading();
-  }, programFilter as any);
+    setStudentsReady(true);
+  }, programFilter as any, onLoadError);
   
   const unsubTest = firebaseBeltTestService.listenActive((data) => {
     setActiveBeltTest(data);
-    testLoaded = true;
-    checkLoading();
-  }, programFilter as any);
+    setLoading(false);
+  }, programFilter as any, onLoadError);
   
   const unsubAuth = firebaseAuthAccessService.subscribe(setAuthConfig);
   
@@ -226,14 +227,14 @@ export default function AdminDashboard() {
   </div>
 
  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
- <StatCard icon={Users} label="Total Students" value={stats.total} color="blue" />
- <StatCard icon={DollarSign} label="Total Revenue" value={`₹${stats.revenue.toLocaleString()}`} color="green" />
- <StatCard icon={CheckCircle} label="Passed Tests" value={stats.passed} color="emerald" />
- <StatCard icon={XCircle} label="Failed Tests" value={stats.failed} color="red" />
- <StatCard icon={Clock} label="Pending Tests" value={stats.pendingTests} color="amber" />
+ <StatCard icon={Users} label="Total Students" value={studentsReady ? stats.total : "…"} color="blue" />
+ <StatCard icon={DollarSign} label="Total Revenue" value={studentsReady ? `₹${stats.revenue.toLocaleString()}` : "…"} color="green" />
+ <StatCard icon={CheckCircle} label="Passed Tests" value={studentsReady ? stats.passed : "…"} color="emerald" />
+ <StatCard icon={XCircle} label="Failed Tests" value={studentsReady ? stats.failed : "…"} color="red" />
+ <StatCard icon={Clock} label="Pending Tests" value={studentsReady ? stats.pendingTests : "…"} color="amber" />
  </div>
 
- {stats.total === 0 && (
+ {studentsReady && stats.total === 0 && (
    <div className="mt-8 p-12 bg-white dark:bg-zinc-950 rounded-2xl border border-zinc-200 dark:border-zinc-800 border-dashed text-center">
      <div className="w-16 h-16 bg-zinc-100 dark:bg-zinc-900 rounded-full flex items-center justify-center mx-auto mb-4">
        <Users className="w-8 h-8 text-zinc-400" />
