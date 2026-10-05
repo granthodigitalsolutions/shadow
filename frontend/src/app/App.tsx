@@ -67,6 +67,7 @@ const BlogPostPage             = lazyWithRetry(() => import("./components/pages/
 
 // Lazy load admin components
 const AdminLogin               = lazyWithRetry(() => import("./components/admin/AdminLogin"));
+const AdminRegister            = lazyWithRetry(() => import("./components/admin/AdminRegister"));
 const AdminDashboard           = lazyWithRetry(() => import("./components/admin/AdminDashboard"));
 const StudentManagement        = lazyWithRetry(() => import("./components/admin/StudentManagement"));
 const ResultManagement         = lazyWithRetry(() => import("./components/admin/ResultManagement"));
@@ -322,7 +323,7 @@ const router = createBrowserRouter([
     element: <PublicLayout />,
     children: [
       { path: "/admin/login",    element: <AdminLogin /> },
-      { path: "/admin/register", element: <Navigate to="/admin/login" replace /> },
+      { path: "/admin/register", element: <AdminRegister /> },
       { path: "/examiner",       element: <ExaminerEntry /> },
       { path: "/examiner/scan",  element: <ExaminerEntry /> },
       { path: "/coach/login", element: <CoachLogin /> },

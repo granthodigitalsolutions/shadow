@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { LogIn, Shield, ArrowLeft, Mail, Lock } from "lucide-react";
 import { firebaseAuthService } from "../../services/firebaseAuth";
 import { firebaseAdminAuthService } from "../../services/firebaseData";
@@ -118,6 +118,11 @@ export default function AdminLogin() {
             )}
           </button>
         </form>
+
+        <p className="mt-6 text-center text-sm text-zinc-400">
+          Don't have an admin account?{" "}
+          <Link to="/admin/register" className="font-bold text-blue-500 hover:text-blue-400">Register</Link>
+        </p>
 
         <div className="mt-6 bg-slate-50 border border-slate-200 dark:bg-zinc-950/30 dark:border-white/5 rounded-xl p-4">
           <p className="text-xs text-zinc-400 text-center leading-relaxed">

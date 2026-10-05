@@ -114,9 +114,21 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
     // No bootstrap rule. First admin must be created via Firebase Console.
+    // Admin self-registration is allowed only while Auth Settings -> Admin Self-Registration is
+    // on, only for the signed-in user's own uid, and only as a plain active admin record.
+    // Changing or deleting an admin record (e.g. deactivating someone) needs an existing admin.
+    function isAdminRegistrationOpen() {
+      return !exists(/databases/$(database)/documents/auth_settings/global) ||
+        get(/databases/$(database)/documents/auth_settings/global).data.roles.get('admin', {}).get('registration', {}).get('enabled', true) == true;
+    }
     match /admins/{adminId} {
-      allow read: if isAdmin() || request.auth.uid == adminId;
-      allow write: if isAdmin() || request.auth.uid == adminId;
+      allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == adminId);
+      allow create: if isAdmin() || (
+        isAuthenticated() && request.auth.uid == adminId && isAdminRegistrationOpen() &&
+        request.resource.data.keys().hasOnly(['name', 'email', 'role', 'active', 'createdAt']) &&
+        request.resource.data.role == 'admin'
+      );
+      allow update, delete: if isAdmin();
     }
     match /settings/{settingId} {
       allow read: if true;

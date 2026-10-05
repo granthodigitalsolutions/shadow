@@ -31,12 +31,22 @@ const DEFAULT_CONFIG: AuthAccessConfig = {
     coach: {
       registration: { enabled: true, message: "", updatedAt: new Date().toISOString(), updatedBy: { uid: "system", name: "System" } },
       login: { enabled: true, message: "", updatedAt: new Date().toISOString(), updatedBy: { uid: "system", name: "System" } }
+    },
+    // Admin self-registration from the Admin login page (on by default; switch off in Auth Settings).
+    admin: {
+      registration: { enabled: true, message: "", updatedAt: new Date().toISOString(), updatedBy: { uid: "system", name: "System" } },
+      login: { enabled: true, message: "", updatedAt: new Date().toISOString(), updatedBy: { uid: "system", name: "System" } }
     }
   },
   globalUpdatedAt: new Date().toISOString(),
   globalUpdatedBy: { uid: "system", name: "System" },
   version: 1
 };
+
+const mergeRole = (base: AuthAccessRoleSettings, raw?: Partial<AuthAccessRoleSettings>): AuthAccessRoleSettings => ({
+  registration: { ...base.registration, ...(raw?.registration ?? {}) },
+  login: { ...base.login, ...(raw?.login ?? {}) },
+});
 
 export const firebaseAuthAccessService = {
   _cachedConfig: DEFAULT_CONFIG,
@@ -79,6 +89,7 @@ export const firebaseAuthAccessService = {
             },
           },
         };
+        data.roles.admin = mergeRole(DEFAULT_CONFIG.roles.admin, (raw.roles as any)?.admin);
         firebaseAuthAccessService._cachedConfig = data;
         if (onUpdate) onUpdate(data);
       }
@@ -119,7 +130,8 @@ export const firebaseAuthAccessService = {
           },
         },
       };
-      firebaseAuthAccessService._cachedConfig = data;
+      data.roles.admin = mergeRole(DEFAULT_CONFIG.roles.admin, (raw.roles as any)?.admin);
+        firebaseAuthAccessService._cachedConfig = data;
       return data;
     }
     // Create it
@@ -177,6 +189,8 @@ export const firebaseAuthAccessService = {
   /**
    * Convenience helpers (uses cached config if populated)
    */
+  isAdminRegistrationOpen: () => firebaseAuthAccessService._cachedConfig.roles?.admin?.registration?.enabled ?? true,
+  getAdminRegistrationMessage: () => firebaseAuthAccessService._cachedConfig.roles?.admin?.registration?.message || "Admin registration is closed.",
   isCoachRegistrationOpen: () => firebaseAuthAccessService._cachedConfig.roles?.coach?.registration?.enabled ?? true,
   isCoachLoginOpen: () => firebaseAuthAccessService._cachedConfig.roles?.coach?.login?.enabled ?? true,
 

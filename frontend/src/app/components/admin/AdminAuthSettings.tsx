@@ -273,6 +273,19 @@ export default function AdminAuthSettings() {
             </div>
           </div>
 
+          {/* Admin Role */}
+          <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden shadow-sm">
+            <div className="px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
+              <h3 className="font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                Admin Registration
+              </h3>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">While enabled, anyone who registers on the Admin login page becomes a full admin immediately.</p>
+            </div>
+            <div className="p-6 space-y-4">
+              {config.roles.admin && renderToggleCard('admin', 'registration', 'Admin Self-Registration')}
+            </div>
+          </div>
+
         </div>
 
         {/* Global Metadata Footer */}
